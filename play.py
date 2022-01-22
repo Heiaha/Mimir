@@ -91,11 +91,10 @@ async def main():
                 pending, return_when=asyncio.FIRST_COMPLETED
             )
 
-            # add another to the queue
-            pending.add(asyncio.create_task(play()))
-
             # write to the output file
             for task in completed:
+                # add another to the queue
+                pending.add(asyncio.create_task(play()))
                 if task.result() is not None:
                     finished_games += 1
                     pbar.update()

@@ -4,6 +4,7 @@ import chess.polyglot
 import random
 import asyncio
 import csv
+import os
 import datetime
 from tqdm import tqdm
 
@@ -69,6 +70,9 @@ async def play():
 
 
 async def main():
+
+    if not os.path.exists("./data/"):
+        os.mkdir("./data/")
 
     pending = {asyncio.create_task(play()) for _ in range(N_CONCURRENT)}
 

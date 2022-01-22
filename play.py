@@ -95,10 +95,10 @@ async def main():
             for task in completed:
                 # add another to the queue
                 pending.add(asyncio.create_task(play()))
-                if task.result() is not None:
+                if result := task.result() is not None:
                     finished_games += 1
                     pbar.update()
-                    csv_writer.writerows(task.result())
+                    csv_writer.writerows(result)
 
     # Finish up the last few games.
     await asyncio.wait(pending, return_when=asyncio.ALL_COMPLETED)

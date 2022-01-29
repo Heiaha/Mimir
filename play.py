@@ -11,11 +11,18 @@ from tqdm import tqdm
 # Options
 ENGINE_NAME = "Weiawaga.exe"
 N_GAMES = 10_000
-N_RANDOM = 8
 N_CONCURRENT = 5
-DEPTH = 10
+MIN_DEPTH = 7
+MAX_DEPTH = 10
+
+with open("filtered_openings.epd") as file:
+    OPENINGS = file.readlines()
 
 OUTCOME_MAP = {"1-0": 1.0, "1/2-1/2": 0.5, "0-1": 0.0}
+
+
+def is_draw_score(score):
+    return score == 0
 
 
 def is_mate_score(score):
@@ -33,24 +40,22 @@ def is_loud(board, move):
 
 async def play():
 
-    board = chess.Board()
-    for _ in range(N_RANDOM):
-        move = random.choice(list(board.legal_moves))
-        board.push(move)
-        if board.is_game_over(claim_draw=True):
-            return None
+    transport, engine = await chess.engine.popen_uci(ENGINE_NAME)
 
     fens = []
     scores = []
     board_hashes = set()
-    limit = chess.engine.Limit(depth=DEPTH)
-    transport, engine = await chess.engine.popen_uci(ENGINE_NAME)
+    board = chess.Board(random.choice(OPENINGS))
 
     while not board.is_game_over(claim_draw=True):
+        limit = chess.engine.Limit(depth=random.randint(MIN_DEPTH, MAX_DEPTH))
         result = await engine.play(board, limit=limit, info=chess.engine.Info.SCORE)
         score = result.info["score"].white().score()
+        if not score:
+            board.push(result.move)
+            continue
 
-        if is_mate_score(score) or is_loud(board, result.move):
+        if is_draw_score(score) or is_mate_score(score) or is_loud(board, result.move):
             board.push(result.move)
             continue
 
@@ -95,10 +100,9 @@ async def main():
             for task in completed:
                 # add another to the queue
                 pending.add(asyncio.create_task(play()))
-                if (result := task.result()) is not None:
-                    finished_games += 1
-                    pbar.update()
-                    csv_writer.writerows(result)
+                csv_writer.writerows(task.result())
+                finished_games += 1
+                pbar.update()
 
     # Finish up the last few games.
     await asyncio.wait(pending, return_when=asyncio.ALL_COMPLETED)
@@ -106,4 +110,5 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.set_event_loop_policy(chess.engine.EventLoopPolicy())
-    asyncio.run(main())
+    while True:
+        asyncio.run(main())

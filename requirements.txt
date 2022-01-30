@@ -1,0 +1,6 @@
+chess~=1.8.0
+tqdm~=4.62.3
+numpy~=1.22.1
+torch~=1.10.1
+python-chess~=1.8.0
+maturin~=0.12.6

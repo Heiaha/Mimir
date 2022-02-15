@@ -33,6 +33,8 @@ class PositionVectorDataset(IterableDataset):
                 fens.append(fen)
 
             for fen, score, result in zip(fens, scores, results):
-                yield torch.Tensor(fen_to_vec(fen)), \
+                vector = fen_to_vec(fen)
+
+                yield torch.Tensor(vector), \
                       torch.Tensor([score]), \
                       torch.Tensor([result])

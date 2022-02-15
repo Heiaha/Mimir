@@ -1,6 +1,5 @@
 import chess
 import chess.engine
-import chess.polyglot
 import random
 import asyncio
 import csv

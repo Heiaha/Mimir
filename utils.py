@@ -85,6 +85,6 @@ def count_fens(input_dir):
 
 
 if __name__ == "__main__":
-    # train_test_split("data", 0.9)
-    # print(find_best_scaling("data"))
-    print(count_fens("data"))
+    # train_test_split("data", 0.98)
+    print(find_best_scaling("data"))
+    # print(count_fens("data"))

@@ -2,19 +2,31 @@ import torch
 import torch.nn as nn
 
 INPUT_FEATURES = 768
-L1 = 128
-CP_SCALING = 0.00837018
+L1 = 256
+CP_SCALING = 0.008380556589999985
+N_BUCKETS = 8
 
 
 class NNUE(nn.Module):
     def __init__(self):
         super().__init__()
         self.input_layer = nn.Linear(INPUT_FEATURES, L1)
-        self.hidden_layer = nn.Linear(L1, 1)
+        self.hidden_layer = nn.Linear(L1, N_BUCKETS)
+
+        self.idx_offset = None
 
     def forward(self, inputs):
-        out = torch.clamp(self.input_layer(inputs), min=0, max=1)
+
+        buckets = (inputs.sum(dim=1) - 1).div(4, rounding_mode="floor").long()
+        if self.idx_offset is None or self.idx_offset.shape[0] != inputs.shape[0]:
+            self.idx_offset = torch.arange(0, inputs.shape[0] * N_BUCKETS, N_BUCKETS, device=inputs.device)
+
+        indices = buckets.flatten() + self.idx_offset
+        out = self.input_layer(inputs)
+        out = torch.clamp(out, min=0, max=1)
+
         out = self.hidden_layer(out)
+        out = out.view(-1, 1)[indices]
         return out
 
 
@@ -31,10 +43,19 @@ if __name__ == "__main__":
     import json
     from fen_parser import fen_to_vec
 
-    # torch.set_printoptions(profile="full")
     model = NNUE()
-    model.load_state_dict(torch.load("nets/lambda1.0_epochs20_lr0.0005_bs8192_2022-01-27T08-47-04/model_state_dict_20.pth"))
+    model.load_state_dict(
+        torch.load(
+            "nets/bucket_psqt_lambda0.8_lr0.001_bs8192_2022-02-04T04-29-17/model_state_dict_19.pth",
+            map_location="cpu"
+        )
+    )
 
     model.eval()
     print(model)
-    print(model(torch.Tensor(fen_to_vec("q7/4BQ2/7k/4p3/8/6P1/5P1K/8 w - - 2 61"))))
+    vec = fen_to_vec("3r4/p3r3/1k6/2p5/2p4p/3B4/PPP2QPP/3K4 w - - 0 38")
+    with torch.no_grad():
+        print(model(torch.Tensor([vec])))
+
+    # torch.set_printoptions(threshold=10_000_000)
+    # print(torch.round(model.state_dict()["input_layer.weight"].flatten()*64).round().to(int))

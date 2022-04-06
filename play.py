@@ -10,22 +10,14 @@ from tqdm import tqdm
 # Options
 ENGINE_NAME = "Weiawaga.exe"
 N_GAMES = 10_000
-N_CONCURRENT = 5
+N_CONCURRENT = 10
 MIN_DEPTH = 7
 MAX_DEPTH = 10
 
 with open("filtered_openings.epd") as file:
     OPENINGS = file.readlines()
 
-OUTCOME_MAP = {"1-0": 1.0, "1/2-1/2": 0.5, "0-1": 0.0}
-
-
-def is_draw_score(score):
-    return score == 0
-
-
-def is_mate_score(score):
-    return 2 * abs(score) >= 10_000
+OUTCOME_MAP = {chess.WHITE: 1.0, None: 0.5, chess.BLACK: 0.0}
 
 
 def is_loud(board, move):
@@ -49,12 +41,13 @@ async def play():
     while not board.is_game_over(claim_draw=True):
         limit = chess.engine.Limit(depth=random.randint(MIN_DEPTH, MAX_DEPTH))
         result = await engine.play(board, limit=limit, info=chess.engine.Info.SCORE)
-        score = result.info["score"].white().score()
-        if not score:
+        if result.info.get("score") is None:
             board.push(result.move)
             continue
 
-        if is_draw_score(score) or is_mate_score(score) or is_loud(board, result.move):
+        score = result.info["score"].white()
+
+        if score.is_mate() or is_loud(board, result.move):
             board.push(result.move)
             continue
 
@@ -65,22 +58,19 @@ async def play():
             board_hashes.add(key)
 
         fens.append(board.fen())
-        scores.append(score)
+        scores.append(score.score())
         board.push(result.move)
 
     await engine.quit()
-    outcome = OUTCOME_MAP[board.outcome(claim_draw=True).result()]
-    return zip(fens, scores, [outcome for _ in scores])
+    outcome = OUTCOME_MAP[board.outcome(claim_draw=True).winner]
+    return zip(fens, scores, [outcome] * len(fens))
 
 
 async def main():
 
-    if not os.path.exists("./data/"):
-        os.mkdir("./data/")
-
     pending = {asyncio.create_task(play()) for _ in range(N_CONCURRENT)}
-
     finished_games = 0
+
     with open(
         f"./data/{datetime.datetime.now().strftime('%Y-%m-%dT%H-%M-%S')}.csv",
         "w",
@@ -88,7 +78,7 @@ async def main():
     ) as out_file, tqdm(total=N_GAMES) as pbar:
 
         csv_writer = csv.writer(out_file)
-        while finished_games < N_GAMES:
+        while pending:
 
             # wait for a game to complete
             completed, pending = await asyncio.wait(
@@ -98,13 +88,11 @@ async def main():
             # write to the output file
             for task in completed:
                 # add another to the queue
-                pending.add(asyncio.create_task(play()))
                 csv_writer.writerows(task.result())
                 finished_games += 1
                 pbar.update()
-
-    # Finish up the last few games.
-    await asyncio.wait(pending, return_when=asyncio.ALL_COMPLETED)
+                if finished_games + len(pending) < N_GAMES:
+                    pending.add(asyncio.create_task(play()))
 
 
 if __name__ == "__main__":

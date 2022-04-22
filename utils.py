@@ -83,8 +83,3 @@ def count_fens(input_dir):
             total += sum(1 for _ in file)
     return total
 
-
-if __name__ == "__main__":
-    train_test_split("data", 0.98)
-    print(find_best_scaling("data"))
-    # print(count_fens("data"))

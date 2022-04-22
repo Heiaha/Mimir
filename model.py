@@ -51,25 +51,3 @@ class NNUE(nn.Module):
         )
 
         return loss.mean()
-
-
-if __name__ == "__main__":
-    import json
-    from fen_parser import fen_to_vec
-
-    model = NNUE()
-    model.load_state_dict(
-        torch.load(
-            "nets/bucket_lambda0.5_lr0.001_bs8192_2022-03-08T02-01-41/model_state_dict_7.pth",
-            map_location="cpu",
-        )
-    )
-
-    model.eval()
-    print(model)
-    vec = fen_to_vec("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
-    with torch.no_grad():
-        print(model(torch.Tensor([vec])))
-
-    # torch.set_printoptions(threshold=10_000_000)
-    # print(torch.round(model.state_dict()["psqt_layer.weight"].T.flatten()*64).round().to(int))

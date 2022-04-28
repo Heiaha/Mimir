@@ -51,7 +51,7 @@ async def play():
             board.push(result.move)
             continue
 
-        if key := board._transposition_key() in board_hashes:
+        if (key := board._transposition_key()) in board_hashes:
             board.push(result.move)
             continue
         else:

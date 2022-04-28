@@ -3,7 +3,6 @@ import chess.engine
 import random
 import asyncio
 import csv
-import os
 import datetime
 from tqdm import tqdm
 

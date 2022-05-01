@@ -1,5 +1,5 @@
+import config
 import os
-import datetime
 import torch
 import torch.optim as optim
 import json
@@ -10,18 +10,6 @@ from dataset import PositionVectorDataset
 from torch.utils.data import DataLoader
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from glob import glob
-
-
-BATCH_SIZE = 8192
-LEARNING_RATE = 1e-3
-N_WORKERS = 8
-VALIDATION_CHECKS_PER_EPOCH = 10
-SAVE_PATH = f"nets/{datetime.datetime.now().strftime('%Y-%m-%dT%H-%M-%S')}/"
-DEVICE = "cuda:0" if torch.cuda.is_available() else "cpu"
-
-
-TRAINING_DIR = "training/"
-TESTING_DIR = "testing/"
 
 
 def step(model, optimizer, X, score, result):
@@ -40,7 +28,7 @@ def calc_val_loss(model, val_data):
         running_loss = 0
         n_batches = 0
         for X, score, result in val_data:
-            X, score, result = X.to(DEVICE), score.to(DEVICE), result.to(DEVICE)
+            X, score, result = X.to(config.DEVICE), score.to(config.DEVICE), result.to(config.DEVICE)
             pred = model(X)
             loss = model.loss(pred, score, result)
             running_loss += loss.item()
@@ -51,7 +39,7 @@ def calc_val_loss(model, val_data):
 
 
 def checkpoint(model, epoch):
-    torch.save(model.state_dict(), SAVE_PATH + f"/model_state_dict_{epoch}.pth")
+    torch.save(model.state_dict(), config.SAVE_PATH + f"/model_state_dict_{epoch}.pth")
     save_dict = {
         name: torch.flatten(
             tensor.T if "input" in name or "psqt" in name else tensor
@@ -59,44 +47,44 @@ def checkpoint(model, epoch):
         for name, tensor in model.state_dict().items()
     }
 
-    with open(SAVE_PATH + f"/model_parameters_raw_{epoch}.txt", "w") as file:
+    with open(config.SAVE_PATH + f"/model_parameters_raw_{epoch}.txt", "w") as file:
         file.write(json.dumps(save_dict))
 
     save_dict = utils.quantize(save_dict)
 
-    with open(SAVE_PATH + f"/model_parameters_{epoch}.txt", "w") as file:
+    with open(config.SAVE_PATH + f"/model_parameters_{epoch}.txt", "w") as file:
         file.write(json.dumps(save_dict))
 
 
 def main():
-    print(f"Running on: {DEVICE}")
-    training_files = glob(f"{TRAINING_DIR}/*")
-    validation_files = glob(f"{TESTING_DIR}/*")
-    os.mkdir(SAVE_PATH)
+    print(f"Running on: {config.DEVICE}")
+    training_files = glob(f"{config.TRAINING_DIR}/*")
+    validation_files = glob(f"{config.TESTING_DIR}/*")
+    os.mkdir(config.SAVE_PATH)
 
-    model = NNUE().to(DEVICE)
+    model = NNUE().to(config.DEVICE)
 
-    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
+    optimizer = optim.Adam(model.parameters(), lr=config.LEARNING_RATE)
     scheduler = ReduceLROnPlateau(
         optimizer, mode="min", patience=1, verbose=True, min_lr=1e-8
     )
 
     training_dataloader = DataLoader(
         PositionVectorDataset(training_files),
-        batch_size=BATCH_SIZE,
-        num_workers=N_WORKERS,
+        batch_size=config.BATCH_SIZE,
+        num_workers=config.N_WORKERS,
         drop_last=True,
     )
 
     validation_dataloader = DataLoader(
         PositionVectorDataset(validation_files),
-        batch_size=BATCH_SIZE,
-        num_workers=N_WORKERS,
+        batch_size=config.BATCH_SIZE,
+        num_workers=config.N_WORKERS,
         drop_last=True,
     )
 
-    total_batches = utils.count_fens(TRAINING_DIR) // BATCH_SIZE
-    batch_check_n = total_batches // VALIDATION_CHECKS_PER_EPOCH
+    total_batches = utils.count_fens(config.TRAINING_DIR) // config.BATCH_SIZE
+    batch_check_n = total_batches // config.VALIDATION_CHECKS_PER_EPOCH
 
     best_val_loss = float("inf")
     print(f"Batches in epoch: {total_batches}")
@@ -107,7 +95,7 @@ def main():
         for X, score, result in training_dataloader:
             epoch_batches += 1
 
-            X, score, result = X.to(DEVICE), score.to(DEVICE), result.to(DEVICE)
+            X, score, result = X.to(config.DEVICE), score.to(config.DEVICE), result.to(config.DEVICE)
 
             # forward + backward + optimize
             loss = step(model, optimizer, X, score, result)

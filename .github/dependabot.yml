@@ -3,9 +3,9 @@ updates:
   - package-ecosystem: "pip" 
     directory: "/" 
     schedule:
-      interval: "monthly"
+      interval: "daily"
       
   - package-ecosystem: "cargo"
     directory: "/fen_parser/"
     schedule:
-      interval: "monthly"
+      interval: "daily"

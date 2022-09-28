@@ -82,4 +82,3 @@ def count_fens(input_dir):
         with open(filename, "r") as file:
             total += sum(1 for _ in file)
     return total
-

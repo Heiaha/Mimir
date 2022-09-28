@@ -1,7 +1,23 @@
+from dataclasses import dataclass
+
 import random
 import torch
+
+import config
 from fen_parser import fen_to_vec
 from torch.utils.data import IterableDataset
+
+
+@dataclass
+class Batch:
+    X: torch.Tensor
+    score: torch.Tensor
+    result: torch.Tensor
+
+    def __init__(self, X, score, result):
+        self.X = X.to(config.DEVICE)
+        self.score = score.to(config.DEVICE)
+        self.result = result.to(config.DEVICE)
 
 
 class PositionVectorDataset(IterableDataset):

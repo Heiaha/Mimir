@@ -1,15 +1,16 @@
 import datetime
 import torch
 
+from pathlib import Path
+
 ############################################
 # Hyperpatameters
 ############################################
 INPUT_FEATURES = 768
 L1 = 256
-CP_SCALING = 0.007828325269999983
+CP_SCALING = 0.0045235127
 N_BUCKETS = 8
-LAMBDA = 1.0
-EPSILON = 1e-12
+LAMBDA = 0.8
 
 ############################################
 # Training
@@ -24,6 +25,6 @@ DEVICE = "cuda:0" if torch.cuda.is_available() else "cpu"
 ############################################
 # Paths
 ############################################
-SAVE_PATH = f"nets/{datetime.datetime.now().strftime('%Y-%m-%dT%H-%M-%S')}/"
-TRAINING_DIR = "training/"
-TESTING_DIR = "testing/"
+SAVE_PATH = Path(f"nets/{datetime.datetime.now().strftime('%Y-%m-%dT%H-%M-%S')}/")
+TRAINING_DIR = Path("training/")
+VALIDATION_DIR = Path("testing/")

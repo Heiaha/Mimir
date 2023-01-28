@@ -2,10 +2,9 @@ import config
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import json
 from torch.optim.lr_scheduler import ReduceLROnPlateau
+from collections import defaultdict
 
-import utils
 from dataset import Batch
 
 
@@ -42,19 +41,10 @@ class NNUE(nn.Module):
     def loss(pred, score, result):
         wdl_eval_model = (pred * config.CP_SCALING).sigmoid()
         wdl_eval_target = (score * config.CP_SCALING).sigmoid()
-        wdl_value_target = (
-            config.LAMBDA * wdl_eval_target + (1 - config.LAMBDA) * result
-        )
 
-        loss = (
-            wdl_value_target * torch.log(wdl_value_target + config.EPSILON)
-            + (1 - wdl_value_target) * torch.log(1 - wdl_value_target + config.EPSILON)
-        ) - (
-            wdl_value_target * torch.log(wdl_eval_model + config.EPSILON)
-            + (1 - wdl_value_target) * torch.log(1 - wdl_eval_model + config.EPSILON)
-        )
+        wdl_value_target = config.LAMBDA * wdl_eval_target + (1 - config.LAMBDA) * result
 
-        return loss.mean()
+        return (wdl_eval_model - wdl_value_target).square().mean()
 
     def step(self, batch):
         pred = self(batch.X)
@@ -82,20 +72,42 @@ class NNUE(nn.Module):
         return val_loss
 
     def checkpoint(self, epoch):
+
         torch.save(
-            self.state_dict(), config.SAVE_PATH + f"/model_state_dict_{epoch}.pth"
+            self.state_dict(), config.SAVE_PATH / f"model_state_dict_{epoch}.pth"
         )
-        save_dict = {
+
+        quantized_weights = self.quantize()
+
+        with open(config.SAVE_PATH / f"model_parameters_{epoch}.txt", "w") as file:
+            file.write(
+                f"pub const NNUE_INPUT_WEIGHTS: [i16; {len(quantized_weights['input_layer.weight'])}] = {quantized_weights['input_layer.weight']};"
+            )
+
+            file.write(
+                f"pub const NNUE_INPUT_BIASES: [i16; {len(quantized_weights['input_layer.bias'])}] = {quantized_weights['input_layer.bias']};"
+            )
+
+            file.write(
+                f"pub const NNUE_HIDDEN_WEIGHTS: [i16; {len(quantized_weights['hidden_layer.weight'])}] = {quantized_weights['hidden_layer.weight']};"
+            )
+
+            file.write(
+                f"pub const NNUE_HIDDEN_BIASES: [i16; {len(quantized_weights['hidden_layer.bias'])}] = {quantized_weights['hidden_layer.bias']};"
+            )
+
+    def quantize(self):
+        new_dict = defaultdict(list)
+
+        param_dict = {
             name: torch.flatten(
                 tensor.T if "input" in name or "psqt" in name else tensor
             ).tolist()
             for name, tensor in self.state_dict().items()
         }
 
-        with open(config.SAVE_PATH + f"/model_parameters_raw_{epoch}.txt", "w") as file:
-            file.write(json.dumps(save_dict))
+        for name, weights in param_dict.items():
+            for value in weights:
+                new_dict[name].append(round(value * 64))
 
-        save_dict = utils.quantize(save_dict)
-
-        with open(config.SAVE_PATH + f"/model_parameters_{epoch}.txt", "w") as file:
-            file.write(json.dumps(save_dict))
+        return dict(new_dict)

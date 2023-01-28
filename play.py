@@ -6,31 +6,32 @@ import asyncio
 import csv
 import datetime
 
-from dataclasses import dataclass
 from tqdm import tqdm
 
 
 # Options
 ENGINE_NAME = "Weiawaga.exe"
+OUTPUT_DIR = "data"
 N_GAMES = 10_000
-N_CONCURRENT = 10
-MIN_DEPTH = 8
-MAX_DEPTH = 10
+N_CONCURRENT = 5
+DEPTH = 10
+
+RANDOM_MOVE_PROB = 0.05
 MAX_PLY = 400
+
 DRAW_SCORE = 10
 DRAW_COUNT = 10
 MIN_DRAW_PLY = 80
 
-with open("filtered_openings.epd") as file:
+with open("noob_3moves.epd") as file:
     OPENINGS = file.readlines()
 
-OUTCOME_MAP = {"1-0": 1.0, "1/2-1/2": 0.5, "*": 0.5, "0-1": 0.0}
 
-
-def is_loud(board, move):
+def is_loud(board: chess.Board, move: chess.Move):
     return (
         move.promotion
         or board.is_capture(move)
+        or board.is_en_passant(move)
         or board.is_check()
         or board.gives_check(move)
     )
@@ -41,36 +42,44 @@ async def play():
     transport, engine = await chess.engine.popen_uci(ENGINE_NAME)
 
     draw_count = 0
-
     fens = []
     scores = []
     zobrist_hashes = set()
-    board = chess.Board(random.choice(OPENINGS))
 
-    while not board.is_game_over(claim_draw=True) and board.ply() < MAX_PLY:
-        limit = chess.engine.Limit(depth=random.randint(MIN_DEPTH, MAX_DEPTH))
-        result = await engine.play(board, limit=limit, info=chess.engine.Info.SCORE)
+    board = chess.Board(random.choice(OPENINGS))
+    while not board.is_game_over(claim_draw=True) and (ply := board.ply()) < MAX_PLY:
+
+        if random.random() < RANDOM_MOVE_PROB:
+            move = random.choice(list(board.legal_moves))
+            board.push(move)
+            continue
+
+        result = await engine.play(
+            board, limit=chess.engine.Limit(depth=DEPTH), info=chess.engine.Info.SCORE
+        )
+
+        move = result.move
+
         if "score" not in result.info:
-            board.push(result.move)
+            board.push(move)
             continue
 
         score = result.info["score"].white()
 
-        if score.is_mate() or is_loud(board, result.move):
-            board.push(result.move)
+        if score.is_mate() or is_loud(board, move):
+            board.push(move)
             continue
 
         if (key := chess.polyglot.zobrist_hash(board)) in zobrist_hashes:
-            board.push(result.move)
+            board.push(move)
             continue
         else:
             zobrist_hashes.add(key)
 
         fens.append(board.fen())
         scores.append(score.score())
-        board.push(result.move)
 
-        if board.ply() > MIN_DRAW_PLY:
+        if ply >= MIN_DRAW_PLY:
             if abs(score.score()) <= DRAW_SCORE:
                 draw_count += 1
                 if draw_count >= DRAW_COUNT:
@@ -78,9 +87,21 @@ async def play():
             else:
                 draw_count = 0
 
+        board.push(move)
+
+    if outcome := board.outcome(claim_draw=True):
+        if outcome.winner == chess.WHITE:
+            outcome_value = 1.0
+        elif outcome.winner == chess.BLACK:
+            outcome_value = 0.0
+        else:
+            outcome_value = 0.5
+    else:
+        outcome_value = 0.5
+
     await engine.quit()
-    outcome = OUTCOME_MAP[board.result(claim_draw=True)]
-    return zip(fens, scores, [outcome] * len(fens))
+
+    return zip(fens, scores, [outcome_value] * len(fens))
 
 
 async def main():
@@ -89,7 +110,7 @@ async def main():
     finished_games = 0
 
     with open(
-        f"./data_test/{datetime.datetime.now().strftime('%Y-%m-%dT%H-%M-%S')}.csv",
+        f"./{OUTPUT_DIR}/{datetime.datetime.now().strftime('%Y-%m-%dT%H-%M-%S')}.csv",
         "w",
         newline="",
     ) as out_file, tqdm(total=N_GAMES) as pbar:

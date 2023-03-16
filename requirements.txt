@@ -1,5 +1,5 @@
 chess~=1.9.4
 tqdm~=4.64.1
-torch~=1.13.1
+torch~=2.0.0
 maturin~=0.14.10
 numpy~=1.24.1

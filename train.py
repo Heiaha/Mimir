@@ -24,20 +24,14 @@ def main():
     training_dataloader = DataLoader(
         training_dataset,
         batch_size=config.BATCH_SIZE,
-        num_workers=min(
-            len(glob(f"{config.TRAINING_DIR}/*")),
-            config.N_WORKERS
-        ),
+        num_workers=min(len(glob(f"{config.TRAINING_DIR}/*")), config.N_WORKERS),
         drop_last=True,
     )
 
     validation_dataloader = DataLoader(
         validation_dataset,
         batch_size=config.BATCH_SIZE,
-        num_workers=min(
-            len(glob(f"{config.VALIDATION_DIR}/*")),
-            config.N_WORKERS
-        ),
+        num_workers=min(len(glob(f"{config.VALIDATION_DIR}/*")), config.N_WORKERS),
         drop_last=True,
     )
 
@@ -49,10 +43,7 @@ def main():
     best_val_loss = float("inf")
 
     for epoch in itertools.count():
-        for batch_tensors in tqdm(
-                training_dataloader,
-                total=total_batches
-        ):
+        for batch_tensors in tqdm(training_dataloader, total=total_batches):
             batch = Batch(*batch_tensors)
 
             # forward + backward + optimize

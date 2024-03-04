@@ -27,8 +27,8 @@ class NNUE(nn.Module):
 
     @staticmethod
     def loss(pred, cp, result):
-        wdl_pred = (pred * config.NNUE_2_SCORE/config.CP_SCALING).sigmoid()
-        wdl_cp = (cp/config.CP_SCALING).sigmoid()
+        wdl_pred = (pred * config.NNUE_2_SCORE / config.CP_SCALING).sigmoid()
+        wdl_cp = (cp / config.CP_SCALING).sigmoid()
 
         wdl_target = config.LAMBDA * wdl_cp + (1 - config.LAMBDA) * result
 
@@ -87,12 +87,16 @@ if __name__ == "__main__":
     from fen_parser import fen_to_vec
 
     model = NNUE()
-    model.load_state_dict(torch.load("./nets/2024-03-01T20-57-31/model_state_dict_32.pth"))
-    print(600*model(
-        torch.Tensor(fen_to_vec("2r5/8/4k3/4p1p1/1KP1P3/2N2P1p/1P6/8 w - - 0 56")).reshape(1, -1).to(config.DEVICE)
-    ))
+    model.load_state_dict(
+        torch.load("./nets/2024-03-01T20-57-31/model_state_dict_32.pth")
+    )
+    print(
+        600
+        * model(
+            torch.Tensor(fen_to_vec("2r5/8/4k3/4p1p1/1KP1P3/2N2P1p/1P6/8 w - - 0 56"))
+            .reshape(1, -1)
+            .to(config.DEVICE)
+        )
+    )
     os.mkdir(config.SAVE_PATH)
     model.checkpoint(999)
-
-
-

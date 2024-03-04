@@ -50,7 +50,10 @@ async def play():
     while not board.is_game_over(claim_draw=True) and (ply := board.ply()) < MAX_PLY:
 
         results = await engine.analyse(
-            board, limit=chess.engine.Limit(depth=DEPTH), info=chess.engine.Info.ALL, multipv=2
+            board,
+            limit=chess.engine.Limit(depth=DEPTH),
+            info=chess.engine.Info.ALL,
+            multipv=2,
         )
 
         if random.random() < RANDOM_MOVE_PROB and len(results) > 1:

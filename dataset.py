@@ -32,24 +32,20 @@ class PositionVectorDataset(IterableDataset):
         worker_info = torch.utils.data.get_worker_info()
         if worker_info is not None:
             assert (
-                    len(self.filenames) >= worker_info.num_workers
+                len(self.filenames) >= worker_info.num_workers
             ), "Number of files must be larger than the number of workers."
-            filenames = self.filenames[worker_info.id::worker_info.num_workers]
+            filenames = self.filenames[worker_info.id :: worker_info.num_workers]
         else:
             filenames = self.filenames
 
         random.shuffle(filenames)
         for filename in filenames:
-            data = (
-                pl.read_parquet(filename)
-                .sample(fraction=1)
-                .to_dicts()
-            )
+            data = pl.read_parquet(filename).sample(fraction=1).to_dicts()
             for line in data:
                 yield (
                     torch.Tensor(fen_to_vec(line["fen"])),
                     torch.Tensor([line["cp"]]),
-                    torch.Tensor([line["result"]])
+                    torch.Tensor([line["result"]]),
                 )
 
     def __len__(self):
@@ -66,4 +62,3 @@ if __name__ == "__main__":
     filenames = Path("data_d8").glob("*")
     dataset = PositionVectorDataset(filenames)
     print(len(dataset))
-

@@ -3,10 +3,11 @@ import polars as pl
 from glob import glob
 import seaborn as sns
 import matplotlib.pyplot as plt
+
 sns.set()
 
-class Hist:
 
+class Hist:
     def __init__(self, low: int | float, high: int | float, n_bins: int):
         self.low = low
         self.high = high
@@ -57,14 +58,8 @@ class Hist:
 
     def plot(self, scale):
         x = np.linspace(self.low, self.high, self.n_bins)
-        sns.lineplot(
-            x=x,
-            y=self.sigmoid(scale*x)
-        )
-        sns.lineplot(
-            x=x,
-            y=self.weights/self.counts
-        )
+        sns.lineplot(x=x, y=self.sigmoid(scale * x))
+        sns.lineplot(x=x, y=self.weights / self.counts)
 
         plt.show()
 
@@ -100,6 +95,7 @@ def fit(x, y):
 
 if __name__ == "__main__":
     from tqdm import tqdm
+
     hist = Hist(-800, 800, 100)
 
     for filename in tqdm(glob(f"training/*")):
@@ -113,6 +109,5 @@ if __name__ == "__main__":
             hist.fill(line["cp"], line["result"])
 
     scaling = hist.fit()
-    print(1/scaling)
+    print(1 / scaling)
     hist.plot(scaling)
-

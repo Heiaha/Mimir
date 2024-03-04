@@ -1,8 +1,9 @@
 import numpy as np
-import seaborn.objects as so
-
+import polars as pl
 from glob import glob
-
+import seaborn as sns
+import matplotlib.pyplot as plt
+sns.set()
 
 class Hist:
 
@@ -24,7 +25,6 @@ class Hist:
         self.counts[bin_n] += 1
 
     def fit(self):
-
         def mse(x, y, k):
             return np.square(y - self.sigmoid(k * x)).mean()
 
@@ -32,8 +32,8 @@ class Hist:
         y = self.weights / self.counts
 
         min_ = 0.0
-        max_ = 0.1
-        delta = 0.01
+        max_ = 10
+        delta = 0.1
         best = mse(x, y, min_)
 
         for _ in range(10):
@@ -55,18 +55,64 @@ class Hist:
     def sigmoid(x):
         return 1 / (1 + np.exp(-x))
 
+    def plot(self, scale):
+        x = np.linspace(self.low, self.high, self.n_bins)
+        sns.lineplot(
+            x=x,
+            y=self.sigmoid(scale*x)
+        )
+        sns.lineplot(
+            x=x,
+            y=self.weights/self.counts
+        )
+
+        plt.show()
+
+
+def sigmoid(x):
+    return 1 / (1 + np.exp(-x))
+
+
+def fit(x, y):
+    def mse(x, y, k):
+        return np.square(y - sigmoid(k * x)).mean()
+
+    min_ = 0.0
+    max_ = 10
+    delta = 0.1
+    best = mse(x, y, min_)
+
+    for _ in range(10):
+        value = min_
+        while value < max_:
+            error = mse(x, y, value)
+            if error <= best:
+                best = error
+                min_ = value
+            value += delta
+
+        max_ = min_ + delta
+        min_ = min_ - delta
+        delta /= 10
+
+    return min_
+
 
 if __name__ == "__main__":
-    hist = Hist(-1500, 1500, 500)
+    from tqdm import tqdm
+    hist = Hist(-800, 800, 100)
 
-    for filename in glob(f"data/*"):
-        with open(filename, "r") as file:
-            for line in file:
-                fen, score, result = line.split(",")
-                score = int(score)
-                result = float(result)
-                hist.fill(score, result)
+    for filename in tqdm(glob(f"training/*")):
+        data = (
+            pl.scan_parquet(filename)
+            .select(pl.col("cp", "result"))
+            .collect()
+            .to_dicts()
+        )
+        for line in data:
+            hist.fill(line["cp"], line["result"])
 
-    print(hist.fit())
-
+    scaling = hist.fit()
+    print(1/scaling)
+    hist.plot(scaling)
 

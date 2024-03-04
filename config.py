@@ -6,11 +6,11 @@ from pathlib import Path
 ############################################
 # Hyperpatameters
 ############################################
-INPUT_FEATURES = 768
+L0 = 768
 L1 = 256
-CP_SCALING = 0.0045235127
-N_BUCKETS = 8
-LAMBDA = 0.8
+
+LAMBDA = 1.0
+PATIENCE = 1
 
 ############################################
 # Training
@@ -18,7 +18,6 @@ LAMBDA = 0.8
 BATCH_SIZE = 8192
 LEARNING_RATE = 1e-3
 N_WORKERS = 8
-VALIDATION_CHECKS_PER_EPOCH = 10
 DEVICE = "cuda:0" if torch.cuda.is_available() else "cpu"
 
 
@@ -28,3 +27,10 @@ DEVICE = "cuda:0" if torch.cuda.is_available() else "cpu"
 SAVE_PATH = Path(f"nets/{datetime.datetime.now().strftime('%Y-%m-%dT%H-%M-%S')}/")
 TRAINING_DIR = Path("training/")
 VALIDATION_DIR = Path("testing/")
+
+############################################
+# Scaling
+############################################
+NNUE_2_SCORE = 600
+CP_SCALING = 400
+SCALE = 64

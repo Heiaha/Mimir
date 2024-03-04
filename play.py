@@ -14,14 +14,14 @@ ENGINE_NAME = "Weiawaga.exe"
 OUTPUT_DIR = "data"
 N_GAMES = 10_000
 N_CONCURRENT = 5
-DEPTH = 10
+DEPTH = 8
 
 RANDOM_MOVE_PROB = 0.05
 MAX_PLY = 400
 
-DRAW_SCORE = 10
+DRAW_SCORE = 20
 DRAW_COUNT = 10
-MIN_DRAW_PLY = 80
+MIN_DRAW_PLY = 40
 
 with open("noob_3moves.epd") as file:
     OPENINGS = file.readlines()
@@ -49,22 +49,22 @@ async def play():
     board = chess.Board(random.choice(OPENINGS))
     while not board.is_game_over(claim_draw=True) and (ply := board.ply()) < MAX_PLY:
 
-        if random.random() < RANDOM_MOVE_PROB:
-            move = random.choice(list(board.legal_moves))
-            board.push(move)
-            continue
-
-        result = await engine.play(
-            board, limit=chess.engine.Limit(depth=DEPTH), info=chess.engine.Info.SCORE
+        results = await engine.analyse(
+            board, limit=chess.engine.Limit(depth=DEPTH), info=chess.engine.Info.ALL, multipv=2
         )
 
-        move = result.move
+        if random.random() < RANDOM_MOVE_PROB and len(results) > 1:
+            result = results[1]
+        else:
+            result = results[0]
 
-        if "score" not in result.info:
+        move = result["pv"][0]
+
+        if "score" not in result:
             board.push(move)
             continue
 
-        score = result.info["score"].white()
+        score = result["score"].white()
 
         if score.is_mate() or is_loud(board, move):
             board.push(move)

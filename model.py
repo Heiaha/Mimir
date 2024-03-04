@@ -11,44 +11,32 @@ from dataset import Batch
 class NNUE(nn.Module):
     def __init__(self):
         super().__init__()
-        self.input_layer = nn.Linear(config.INPUT_FEATURES, config.L1)
-        self.hidden_layer = nn.Linear(config.L1, config.N_BUCKETS)
+        self.input_layer = nn.Linear(config.L0, config.L1)
+        self.l1 = nn.Linear(config.L1, 1)
 
         self.optimizer = optim.Adam(self.parameters(), lr=config.LEARNING_RATE)
         self.scheduler = ReduceLROnPlateau(
-            self.optimizer, mode="min", patience=1, verbose=True, min_lr=1e-8
+            self.optimizer, mode="min", patience=0, verbose=True, min_lr=1e-6
         )
         self.to(config.DEVICE)
 
-    def forward(self, inputs):
+    def forward(self, X):
 
-        buckets = (
-            (inputs.sum(dim=1) - 1)
-            .div(4, rounding_mode="floor")
-            .unsqueeze(dim=1)
-            .long()
-        )
-
-        out = self.input_layer(inputs)
-        out = torch.clamp(out, min=0, max=1)
-
-        out = self.hidden_layer(out)
-        out = out.gather(1, buckets)
-
-        return out
+        l0_ = self.input_layer(X).clamp(0, 1)
+        return self.l1(l0_)
 
     @staticmethod
-    def loss(pred, score, result):
-        wdl_eval_model = (pred * config.CP_SCALING).sigmoid()
-        wdl_eval_target = (score * config.CP_SCALING).sigmoid()
+    def loss(pred, cp, result):
+        wdl_pred = (pred * config.NNUE_2_SCORE/config.CP_SCALING).sigmoid()
+        wdl_cp = (cp/config.CP_SCALING).sigmoid()
 
-        wdl_value_target = config.LAMBDA * wdl_eval_target + (1 - config.LAMBDA) * result
+        wdl_target = config.LAMBDA * wdl_cp + (1 - config.LAMBDA) * result
 
-        return (wdl_eval_model - wdl_value_target).square().mean()
+        return (wdl_pred - wdl_target).square().mean()
 
     def step(self, batch):
         pred = self(batch.X)
-        loss = self.loss(pred, batch.score, batch.result)
+        loss = self.loss(pred, batch.cp, batch.result)
         loss.backward()
         self.optimizer.step()
         # zero the parameter gradients
@@ -63,7 +51,7 @@ class NNUE(nn.Module):
             for batch_data in val_data:
                 batch = Batch(*batch_data)
                 pred = self(batch.X)
-                loss = self.loss(pred, batch.score, batch.result)
+                loss = self.loss(pred, batch.cp, batch.result)
                 running_loss += loss.item()
                 n_batches += 1
             val_loss = running_loss / n_batches
@@ -77,37 +65,34 @@ class NNUE(nn.Module):
             self.state_dict(), config.SAVE_PATH / f"model_state_dict_{epoch}.pth"
         )
 
-        quantized_weights = self.quantize()
-
-        with open(config.SAVE_PATH / f"model_parameters_{epoch}.txt", "w") as file:
-            file.write(
-                f"pub const NNUE_INPUT_WEIGHTS: [i16; {len(quantized_weights['input_layer.weight'])}] = {quantized_weights['input_layer.weight']};"
-            )
-
-            file.write(
-                f"pub const NNUE_INPUT_BIASES: [i16; {len(quantized_weights['input_layer.bias'])}] = {quantized_weights['input_layer.bias']};"
-            )
-
-            file.write(
-                f"pub const NNUE_HIDDEN_WEIGHTS: [i16; {len(quantized_weights['hidden_layer.weight'])}] = {quantized_weights['hidden_layer.weight']};"
-            )
-
-            file.write(
-                f"pub const NNUE_HIDDEN_BIASES: [i16; {len(quantized_weights['hidden_layer.bias'])}] = {quantized_weights['hidden_layer.bias']};"
-            )
-
-    def quantize(self):
-        new_dict = defaultdict(list)
-
         param_dict = {
             name: torch.flatten(
-                tensor.T if "input" in name or "psqt" in name else tensor
-            ).tolist()
+                tensor.T if "input" in name or "residual" in name else tensor
+            )
             for name, tensor in self.state_dict().items()
         }
 
-        for name, weights in param_dict.items():
-            for value in weights:
-                new_dict[name].append(round(value * 64))
+        with open(config.SAVE_PATH / f"model_parameters_{epoch}.rs", "w") as file:
+            for name, param in param_dict.items():
+                if name == "l1.bias":
+                    param = param.mul(config.SCALE)
+                param = param.mul(config.SCALE).round().to(torch.int16)
+                file.write(
+                    f"pub const {name.replace('.', '_').upper()}: [i16; {len(param)}] = {param.tolist()};\n\n"
+                )
 
-        return dict(new_dict)
+
+if __name__ == "__main__":
+    import os
+    from fen_parser import fen_to_vec
+
+    model = NNUE()
+    model.load_state_dict(torch.load("./nets/2024-03-01T20-57-31/model_state_dict_32.pth"))
+    print(600*model(
+        torch.Tensor(fen_to_vec("2r5/8/4k3/4p1p1/1KP1P3/2N2P1p/1P6/8 w - - 0 56")).reshape(1, -1).to(config.DEVICE)
+    ))
+    os.mkdir(config.SAVE_PATH)
+    model.checkpoint(999)
+
+
+

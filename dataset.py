@@ -56,13 +56,13 @@ class PositionVectorIterableDataset(IterableDataset):
                 dtypes={"fen": pl.String, "cp": pl.Int16, "result": pl.Float32},
             )
             .sample(fraction=1, shuffle=True)
-            .to_dicts()
+            .rows()
         )
-        for line in data:
+        for fen, cp, result in data:
             yield (
-                torch.tensor(fen_to_vec(line["fen"]), dtype=torch.float),
-                torch.tensor([line["cp"]], dtype=torch.float),
-                torch.tensor([line["result"]], dtype=torch.float),
+                torch.tensor(fen_to_vec(fen), dtype=torch.float),
+                torch.tensor([cp], dtype=torch.float),
+                torch.tensor([result], dtype=torch.float),
             )
 
     def __iter__(self):

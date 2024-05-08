@@ -1,5 +1,7 @@
-chess~=1.9.4
-tqdm~=4.64.1
-torch~=1.13.1
-maturin~=0.14.10
-numpy~=1.24.1
+chess~=1.10.0
+numpy~=1.24.3
+polars~=0.20.25
+PyYAML~=6.0.1
+seaborn~=0.13.2
+torch~=2.3.0
+tqdm~=4.66.4

@@ -1,0 +1,16 @@
+model:
+  L1: 128
+
+scaling:
+  lambda_: 1.0
+  nnue_2_score: 600
+  cp_scaling: 308.476
+  scale: 64
+
+training:
+  batch_size: 8192
+  workers: 8
+  device: cuda
+  training_dir: training
+  testing_dir: testing
+  save_dir: nets

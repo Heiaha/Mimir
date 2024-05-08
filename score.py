@@ -1,5 +1,5 @@
 import os
-import asyncio
+import concurrent.futures
 
 import chess
 import chess.engine
@@ -8,11 +8,36 @@ import chess.pgn
 from glob import glob
 
 
-N_CONCURRENT = 5
-ENGINE = "Weiawaga.exe"
-OUTPUT_DIR = "data_d8_v2"
-INPUT_GLOB = "lichess/*"
-DEPTH = 8
+def split_file(input_filename, output_dir, games_per_file=10_000):
+
+    file_n = 0
+
+    # Construct initial output filename
+    base_output_filename, _ = os.path.splitext(os.path.basename(input_filename))
+    output_filename = os.path.join(output_dir, f"{base_output_filename}_{file_n}.pgn")
+
+    with open(input_filename, "r") as input_file, open(
+        output_filename, "w"
+    ) as output_file:
+        count = 0
+
+        # Read and write games
+        while game := chess.pgn.read_game(input_file):
+            if game.errors:
+                continue  # Skip games with errors
+
+            output_file.write(f"{game}\n\n")
+            count += 1
+
+            # Check if it's time to split to a new file
+            if count >= games_per_file:
+                file_n += 1
+                count = 0
+                output_file.close()
+                output_filename = os.path.join(
+                    output_dir, f"{base_output_filename}_{file_n}.pgn"
+                )
+                output_file = open(output_filename, "w")
 
 
 def result_to_float(result):
@@ -38,15 +63,20 @@ def is_loud(board: chess.Board, move: chess.Move):
     )
 
 
-async def score(input_path):
-    transport, engine = await chess.engine.popen_uci(ENGINE)
-    output_filename = os.path.basename(input_path).replace(".pgn", ".csv")
+def score(input_filename, *, output_dir, engine, depth):
+    engine = chess.engine.SimpleEngine.popen_uci(engine)
+    output_basename = os.path.basename(input_filename).replace(".pgn", ".csv")
+    output_filename = os.path.join(output_dir, output_basename)
 
-    with open(input_path, "r") as input_file, open(
-        os.path.join(OUTPUT_DIR, output_filename), "w"
+    with open(input_filename, "r") as input_file, open(
+        output_filename, "w"
     ) as output_file:
 
         while game := chess.pgn.read_game(input_file):
+
+            if game.errors:
+                continue
+
             result = result_to_float(game.headers["Result"])
             if result is None:
                 continue
@@ -54,11 +84,13 @@ async def score(input_path):
             board = game.board()
             for node in game.mainline():
 
-                analysis = await engine.play(
+                analysis = engine.play(
                     board,
-                    limit=chess.engine.Limit(depth=DEPTH),
+                    limit=chess.engine.Limit(depth=depth),
                     info=chess.engine.Info.ALL,
+                    game=game,
                 )
+                engine.configure({"Clear Hash": None})
 
                 if (
                     (cp := analysis.info.get("score"))
@@ -69,25 +101,39 @@ async def score(input_path):
 
                 board.push(node.move)
 
+    engine.quit()
+    return output_filename
 
-async def main():
 
-    filenames = sorted(glob(INPUT_GLOB))
-    os.mkdir(OUTPUT_DIR)
+def main(func, *, input_glob, n_concurrent, func_kwargs: dict):
+    filenames = [filename for filename in sorted(glob(input_glob), reverse=True)]
 
-    pending = set()
-    for _ in range(N_CONCURRENT):
-        pending.add(asyncio.create_task(score(filenames.pop())))
+    with concurrent.futures.ProcessPoolExecutor() as executor:
+        pending = set()
+        for _ in range(n_concurrent):
+            pending.add(
+                executor.submit(func, input_filename=filenames.pop(), **func_kwargs)
+            )
 
-    while pending:
-        completed, pending = await asyncio.wait(
-            pending, return_when=asyncio.FIRST_COMPLETED
-        )
+        while pending:
+            completed, pending = concurrent.futures.wait(
+                pending, return_when=concurrent.futures.FIRST_COMPLETED
+            )
 
-        if filenames:
-            pending.add(asyncio.create_task(score(filenames.pop())))
+            if filenames:
+                pending.add(
+                    executor.submit(func, input_filename=filenames.pop(), **func_kwargs)
+                )
 
 
 if __name__ == "__main__":
-    asyncio.set_event_loop_policy(chess.engine.EventLoopPolicy())
-    asyncio.run(main())
+    main(
+        score,
+        input_glob="lichess_v2_split/*",
+        n_concurrent=8,
+        func_kwargs={
+            "output_dir": "data_d8_v2",
+            "depth": 8,
+            "engine": "weiawaga_v7.exe",
+        },
+    )

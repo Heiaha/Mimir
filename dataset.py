@@ -1,31 +1,69 @@
-from pathlib import Path
 import random
 from dataclasses import dataclass
 
 import polars as pl
 import torch
 
-import config
 from fen_parser import fen_to_vec
 from torch.utils.data import IterableDataset
 
 
 @dataclass
 class Batch:
-    X: torch.Tensor
+    x: torch.Tensor
     cp: torch.Tensor
     result: torch.Tensor
 
-    def __init__(self, X, cp, result):
-        self.X = X.to(config.DEVICE)
-        self.cp = cp.to(config.DEVICE)
-        self.result = result.to(config.DEVICE)
+    def __init__(self, x, cp, result):
+        self.x = x
+        self.cp = cp
+        self.result = result
+
+    def to(self, device):
+        self.x, self.cp, self.result = (
+            self.x.to(device),
+            self.cp.to(device),
+            self.result.to(device),
+        )
+        return self
 
 
-class PositionVectorDataset(IterableDataset):
+class PositionVectorIterableDataset(IterableDataset):
     def __init__(self, filenames):
         super().__init__()
         self.filenames = filenames
+        self._len = (
+            pl.scan_csv(
+                self.filenames,
+                low_memory=True,
+                cache=False,
+                has_header=False,
+                new_columns=["fen", "cp", "result"],
+                dtypes={"fen": pl.String, "cp": pl.Int16, "result": pl.Float32},
+            )
+            .select(pl.len())
+            .collect(streaming=True)
+            .item()
+        )
+
+    @staticmethod
+    def read_file(filename):
+        data = (
+            pl.read_csv(
+                filename,
+                has_header=False,
+                new_columns=["fen", "cp", "result"],
+                dtypes={"fen": pl.String, "cp": pl.Int16, "result": pl.Float32},
+            )
+            .sample(fraction=1, shuffle=True)
+            .to_dicts()
+        )
+        for line in data:
+            yield (
+                torch.tensor(fen_to_vec(line["fen"]), dtype=torch.float),
+                torch.tensor([line["cp"]], dtype=torch.float),
+                torch.tensor([line["result"]], dtype=torch.float),
+            )
 
     def __iter__(self):
 
@@ -40,25 +78,8 @@ class PositionVectorDataset(IterableDataset):
 
         random.shuffle(filenames)
         for filename in filenames:
-            data = pl.read_parquet(filename).sample(fraction=1).to_dicts()
-            for line in data:
-                yield (
-                    torch.Tensor(fen_to_vec(line["fen"])),
-                    torch.Tensor([line["cp"]]),
-                    torch.Tensor([line["result"]]),
-                )
+            yield from self.read_file(filename)
 
     def __len__(self):
-        return (
-            pl.scan_parquet(self.filenames, low_memory=True, cache=False)
-            .select(pl.len())
-            .collect(streaming=True)
-            .item()
-        )
+        return self._len
 
-
-if __name__ == "__main__":
-
-    filenames = Path("data_d8").glob("*")
-    dataset = PositionVectorDataset(filenames)
-    print(len(dataset))

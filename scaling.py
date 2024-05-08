@@ -96,15 +96,20 @@ def fit(x, y):
 if __name__ == "__main__":
     from tqdm import tqdm
 
-    hist = Hist(-800, 800, 100)
+    hist = Hist(-1500, 1500, 100)
 
     for filename in tqdm(glob(f"training/*")):
         data = (
-            pl.scan_parquet(filename)
+            pl.scan_csv(
+                filename,
+                new_columns=["fen", "cp", "result"],
+                dtypes={"fen": pl.String, "cp": pl.Int16, "result": pl.Float32},
+            )
             .select(pl.col("cp", "result"))
             .collect()
             .to_dicts()
         )
+
         for line in data:
             hist.fill(line["cp"], line["result"])
 

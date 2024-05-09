@@ -41,7 +41,7 @@ fn index(pc_char: u8, rank: u8, file: u8) -> usize {
 
 #[pyfunction]
 fn fen_to_vec(fen: &str) -> PyResult<Vec<u8>> {
-    let mut inputs: Vec<u8> = vec![0u8; 768];
+    let mut inputs = vec![0; 768];
     let mut rank = 7;
     let mut file = 0;
 
@@ -49,8 +49,7 @@ fn fen_to_vec(fen: &str) -> PyResult<Vec<u8>> {
         Some(s) => String::from(s),
         None => panic!("Malformed FEN."),
     };
-    for char in position.as_bytes().iter() {
-        let char = *char;
+    for &char in position.as_bytes() {
         match char {
             b'A'..=b'z' => {
                 inputs[index(char, rank, file)] = 1;

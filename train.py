@@ -4,7 +4,6 @@ import torch
 import torch.optim as optim
 import yaml
 
-import itertools
 import losses
 from model import NNUE
 from dataset import PositionVectorIterableDataset, Batch
@@ -12,8 +11,7 @@ from torch.utils.data import DataLoader
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from glob import glob
 from tqdm import tqdm
-
-torch.backends.cudnn.benchmark = True
+from math import isclose
 
 
 def train_loop(model, dataloader, loss_fn, optimizer, device):
@@ -22,13 +20,18 @@ def train_loop(model, dataloader, loss_fn, optimizer, device):
     for batch_data in tqdm(dataloader):
         batch = Batch(*batch_data).to(device)
 
+        optimizer.zero_grad()
         pred = model(batch.x)
         loss = loss_fn(pred, batch.cp, batch.result)
 
         # Backpropagation
         loss.backward()
         optimizer.step()
-        optimizer.zero_grad()
+
+        with torch.no_grad():
+            for name, param in model.named_parameters():
+                if "psqt" not in name:
+                    param.clamp_(-1.98, 1.98)
 
 
 @torch.no_grad()
@@ -55,7 +58,7 @@ def main(config_filename):
     testing_files = glob(f"{config['training']['testing_dir']}/*")
     save_path = os.path.join(
         config["training"]["save_dir"],
-        datetime.datetime.utcnow().strftime("%Y-%m-%dT%H-%M-%S"),
+        datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H-%M-%S"),
     )
     os.mkdir(save_path)
 
@@ -67,7 +70,6 @@ def main(config_filename):
         batch_size=config["training"]["batch_size"],
         num_workers=min(len(training_files), config["training"]["workers"]),
         drop_last=True,
-        pin_memory=True,
     )
 
     testing_dataloader = DataLoader(
@@ -75,19 +77,16 @@ def main(config_filename):
         batch_size=config["training"]["batch_size"],
         num_workers=min(len(testing_files), config["training"]["workers"]),
         drop_last=True,
-        pin_memory=True,
     )
 
     model = NNUE(**config["model"]).to(config["training"]["device"])
     loss_fn = losses.ScaledMSELoss(**config["scaling"])
     optimizer = optim.Adam(model.parameters(), lr=1e-3)
-    scheduler = ReduceLROnPlateau(
-        optimizer, factor=0.5, patience=0, threshold=0, min_lr=1e-6
-    )
+    scheduler = ReduceLROnPlateau(optimizer, factor=0.1, patience=0, threshold=0)
 
     best_test_loss = float("inf")
 
-    for epoch in itertools.count():
+    for epoch in range(100):
 
         train_loop(
             model, training_dataloader, loss_fn, optimizer, config["training"]["device"]
@@ -95,15 +94,28 @@ def main(config_filename):
         test_loss = test_loop(
             model, testing_dataloader, loss_fn, config["training"]["device"]
         )
-        scheduler.step(test_loss, epoch)
+        scheduler.step(test_loss)
+        lr, *_ = scheduler.get_last_lr()
 
-        model.checkpoint(epoch, save_path, config["scaling"]["scale"])
+        torch.save(
+            {
+                "epoch": epoch,
+                "model_state_dict": model.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict(),
+                "scheduler_state_dict": scheduler.state_dict(),
+                "loss": test_loss,
+            },
+            os.path.join(save_path, f"model_checkpoint_{epoch}.pth"),
+        )
+
+        model.save_quantized(epoch, save_path)
 
         print(f"Epoch {epoch} validation loss: {test_loss}")
+        print(f"New lr: {lr}")
 
         if test_loss < best_test_loss:
             best_test_loss = test_loss
-        elif abs(scheduler.get_last_lr()[0] - 1e-6) / 1e-6 < 0.01:
+        elif isclose(lr, 1e-6):
             print("Finished Training")
             return
 

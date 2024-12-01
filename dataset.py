@@ -1,10 +1,10 @@
 import random
+import time
 from dataclasses import dataclass
 
 import polars as pl
 import torch
 
-from fen_parser import fen_to_vec
 from torch.utils.data import IterableDataset
 
 
@@ -21,9 +21,9 @@ class Batch:
 
     def to(self, device):
         self.x, self.cp, self.result = (
-            self.x.to(device),
-            self.cp.to(device),
-            self.result.to(device),
+            self.x.to(device, non_blocking=True),
+            self.cp.to(device, non_blocking=True),
+            self.result.to(device, non_blocking=True),
         )
         return self
 
@@ -33,13 +33,8 @@ class PositionVectorIterableDataset(IterableDataset):
         super().__init__()
         self.filenames = filenames
         self._len = (
-            pl.scan_csv(
-                self.filenames,
-                low_memory=True,
-                cache=False,
-                has_header=False,
-                new_columns=["fen", "cp", "result"],
-                dtypes={"fen": pl.String, "cp": pl.Int16, "result": pl.Float32},
+            pl.scan_parquet(
+                filenames,
             )
             .select(pl.len())
             .collect(streaming=True)
@@ -49,18 +44,22 @@ class PositionVectorIterableDataset(IterableDataset):
     @staticmethod
     def read_file(filename):
         data = (
-            pl.read_csv(
+            pl.read_parquet(
                 filename,
-                has_header=False,
-                new_columns=["fen", "cp", "result"],
-                dtypes={"fen": pl.String, "cp": pl.Int16, "result": pl.Float32},
             )
             .sample(fraction=1, shuffle=True)
             .rows()
         )
-        for fen, cp, result in data:
+        for indices, cp, result in data:
+
             yield (
-                torch.tensor(fen_to_vec(fen), dtype=torch.float),
+                torch.sparse_coo_tensor(
+                    indices=torch.tensor([indices]),
+                    values=torch.ones(len(indices)),
+                    size=(768,),
+                    is_coalesced=True,
+                    dtype=torch.float,
+                ).to_dense(),  # fastest is to read sparse format and then convert to dense before collation
                 torch.tensor([cp], dtype=torch.float),
                 torch.tensor([result], dtype=torch.float),
             )
@@ -73,6 +72,7 @@ class PositionVectorIterableDataset(IterableDataset):
                 len(self.filenames) >= worker_info.num_workers
             ), "Number of files must be larger than the number of workers."
             filenames = self.filenames[worker_info.id :: worker_info.num_workers]
+            time.sleep(worker_info.id)
         else:
             filenames = self.filenames
 
@@ -82,4 +82,3 @@ class PositionVectorIterableDataset(IterableDataset):
 
     def __len__(self):
         return self._len
-

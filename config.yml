@@ -1,11 +1,10 @@
 model:
-  L1: 128
+  L1: 256
 
 scaling:
-  lambda_: 1.0
-  nnue_2_score: 600
-  cp_scaling: 308.476
-  scale: 64
+  lambda_: 0.8
+  nnue_2_score: 400
+  cp_scaling: 312.81
 
 training:
   batch_size: 8192

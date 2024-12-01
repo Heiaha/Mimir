@@ -58,6 +58,7 @@ class Hist:
 
     def plot(self, scale):
         x = np.linspace(self.low, self.high, self.n_bins)
+        # ax = sns.barplot(x=x, y=self.counts)
         sns.lineplot(x=x, y=self.sigmoid(scale * x))
         sns.lineplot(x=x, y=self.weights / self.counts)
 
@@ -96,22 +97,24 @@ def fit(x, y):
 if __name__ == "__main__":
     from tqdm import tqdm
 
-    hist = Hist(-1500, 1500, 100)
+    hist = Hist(-1500, 1500, 50)
 
-    for filename in tqdm(glob(f"training/*")):
+    for filename in tqdm(glob("training/*")):
         data = (
-            pl.scan_csv(
-                filename,
-                new_columns=["fen", "cp", "result"],
-                dtypes={"fen": pl.String, "cp": pl.Int16, "result": pl.Float32},
-            )
-            .select(pl.col("cp", "result"))
+            pl.scan_parquet(filename)
+            # pl.scan_csv(
+            #     filename,
+            #     has_header=False,
+            #     new_columns=["fen", "cp", "result"],
+            # )
+            .select("cp", "result")
+            .cast({"cp": pl.Int64, "result": pl.Float64})
             .collect()
-            .to_dicts()
+            .rows()
         )
 
-        for line in data:
-            hist.fill(line["cp"], line["result"])
+        for cp, result in data:
+            hist.fill(cp, result)
 
     scaling = hist.fit()
     print(1 / scaling)

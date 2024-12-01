@@ -1,4 +1,5 @@
 import os
+import time
 import concurrent.futures
 
 import chess
@@ -6,6 +7,7 @@ import chess.engine
 import chess.pgn
 
 from glob import glob
+from tqdm import tqdm
 
 
 def split_file(input_filename, output_dir, games_per_file=10_000):
@@ -23,6 +25,7 @@ def split_file(input_filename, output_dir, games_per_file=10_000):
 
         # Read and write games
         while game := chess.pgn.read_game(input_file):
+
             if game.errors:
                 continue  # Skip games with errors
 
@@ -108,7 +111,9 @@ def score(input_filename, *, output_dir, engine, depth):
 def main(func, *, input_glob, n_concurrent, func_kwargs: dict):
     filenames = [filename for filename in sorted(glob(input_glob), reverse=True)]
 
-    with concurrent.futures.ProcessPoolExecutor() as executor:
+    with concurrent.futures.ProcessPoolExecutor() as executor, tqdm(
+        total=len(filenames)
+    ) as pbar:
         pending = set()
         for _ in range(n_concurrent):
             pending.add(
@@ -119,6 +124,7 @@ def main(func, *, input_glob, n_concurrent, func_kwargs: dict):
             completed, pending = concurrent.futures.wait(
                 pending, return_when=concurrent.futures.FIRST_COMPLETED
             )
+            pbar.update()
 
             if filenames:
                 pending.add(
@@ -129,11 +135,19 @@ def main(func, *, input_glob, n_concurrent, func_kwargs: dict):
 if __name__ == "__main__":
     main(
         score,
-        input_glob="lichess_v2_split/*",
-        n_concurrent=8,
+        input_glob="data/ccrl/split/*",
+        n_concurrent=5,
         func_kwargs={
-            "output_dir": "data_d8_v2",
+            "output_dir": "data/ccrl/scored",
             "depth": 8,
             "engine": "weiawaga_v7.exe",
         },
     )
+    # for input_filename in [
+    #     "data/pgn/CCRL.40-2.Archive.[2165313].pgn",
+    #     "data/pgn/CCRL-404.[1272104].pgn"
+    # ]:
+    #     split_file(
+    #         input_filename,
+    #         "data/pgn/ccrl"
+    #     )

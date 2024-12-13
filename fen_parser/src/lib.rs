@@ -1,35 +1,49 @@
 use pyo3::prelude::*;
 use pyo3::wrap_pyfunction;
-use chess::{Board, Piece, Color};
-use std::str::FromStr;
+
+fn make_index(pc_char: u8, rank: u8, file: u8) -> usize {
+    const PIECES: &[u8] = "PNBRQKpnbrqk".as_bytes();
+
+    let pc = PIECES
+        .iter()
+        .position(|&char| char == pc_char)
+        .unwrap_or_else(|| panic!("Unrecognized piece"));
+    let sq = ((rank << 3) ^ file) as usize;
+    64 * pc + sq
+}
 
 #[pyfunction]
-fn fen_to_vec(fen: &str) -> PyResult<Vec<u8>> {
-    let mut vector = vec![0u8; 768];
-    let board = Board::from_str(fen).expect("Invalid fen.");
-    let white = board.color_combined(Color::White);
-    let black = board.color_combined(Color::Black);
-    let bitboards = [
-        board.pieces(Piece::Pawn) & white,
-        board.pieces(Piece::Knight) & white,
-        board.pieces(Piece::Bishop) & white,
-        board.pieces(Piece::Rook) & white,
-        board.pieces(Piece::Queen) & white,
-        board.pieces(Piece::King) & white,
-        board.pieces(Piece::Pawn) & black,
-        board.pieces(Piece::Knight) & black,
-        board.pieces(Piece::Bishop) & black,
-        board.pieces(Piece::Rook) & black,
-        board.pieces(Piece::Queen) & black,
-        board.pieces(Piece::King) & black,
-    ];
+fn fen_to_vec(fen: &str) -> PyResult<Vec<usize>> {
+    let mut indices = Vec::with_capacity(32);
+    let mut rank = 7;
+    let mut file = 0;
 
-    for (index, piece_bb) in bitboards.iter().enumerate() {
-        for sq in *piece_bb {
-            vector[index*64 + sq.to_int() as usize] = 1;
+    let mut parts = fen.split_whitespace();
+
+    let position = match parts.next() {
+        Some(s) => String::from(s),
+        None => panic!("Malformed FEN."),
+    };
+    for &char in position.as_bytes() {
+        match char {
+            b'A'..=b'z' => {
+                indices.push(make_index(char, rank, file));
+                file += 1;
+            }
+            b'/' => {
+                rank -= 1;
+                file = 0;
+            }
+            b'1'..=b'8' => {
+                file += char - b'0';
+            }
+            _ => {
+                panic!("Unrecognized character.");
+            }
         }
     }
-    Ok(vector)
+
+    Ok(indices)
 }
 
 #[pymodule]

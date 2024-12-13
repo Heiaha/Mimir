@@ -1,38 +1,69 @@
+import contextlib
 import os
+import os.path
+import uuid
 import random
+import json
+import polars as pl
 from glob import glob
+from tqdm import tqdm
 
-from collections import defaultdict
-
-
-def quantize(param_dict):
-    new_dict = defaultdict(list)
-
-    for name, weights in param_dict.items():
-        for value in weights:
-            new_dict[name].append(round(value * 64))
-
-    return dict(new_dict)
+from fen_parser import fen_to_vec
 
 
-def train_test_split(input_dir, train_frac):
-    for input_path in glob(f"{input_dir}/*"):
-        with open(input_path, "r") as file:
-            lines = file.readlines()
-        random.shuffle(lines)
+def interleave(*input_globs, train_frac=0.95, size_per_file_mb=100):
 
-        basename = os.path.basename(input_path)
+    input_filenames = []
+    for input_glob in input_globs:
+        input_filenames.extend(glob(input_glob))
 
-        with open(f"training/{basename}", "w") as training_file, open(
-            f"testing/{basename}", "w"
-        ) as testing_file:
+    input_size_mb = sum(os.path.getsize(filename) for filename in input_filenames) / 1e6
+    n_files = int(input_size_mb // size_per_file_mb)
 
-            for line in lines:
+    random.shuffle(input_filenames)
+    with contextlib.ExitStack() as stack:
+        training_files = [
+            stack.enter_context(open(f"training/{uuid.uuid4()}.json", "w"))
+            for _ in range(n_files)
+        ]
+        testing_files = [
+            stack.enter_context(open(f"testing/{uuid.uuid4()}.json", "w"))
+            for _ in range(n_files)
+        ]
+
+        for input_filename in tqdm(input_filenames):
+
+            lines = (
+                pl.read_csv(
+                    input_filename,
+                    has_header=False,
+                    new_columns=["fen", "cp", "result"],
+                )
+                .cast({"cp": pl.Int64, "result": pl.Float64})
+                .sample(fraction=1.0, shuffle=True)
+                .rows()
+            )
+
+            for fen, cp, result in lines:
+                indices = fen_to_vec(fen)
+
+                position_str = json.dumps(
+                    {"indices": indices, "cp": cp, "result": result}
+                )
+
                 if random.random() < train_frac:
-                    training_file.write(line)
+                    random.choice(training_files).write(position_str + "\n")
                 else:
-                    testing_file.write(line)
+                    random.choice(testing_files).write(position_str + "\n")
+
+    for filename in tqdm(glob("training/*")):
+        pl.read_ndjson(filename).write_parquet(filename.replace(".json", ".parquet"))
+        os.remove(filename)
+
+    for filename in tqdm(glob("testing/*")):
+        pl.read_ndjson(filename).write_parquet(filename.replace(".json", ".parquet"))
+        os.remove(filename)
 
 
 if __name__ == "__main__":
-    train_test_split("data", 0.98)
+    interleave("data/lichess_elite/scored/*", train_frac=0.95)

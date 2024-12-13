@@ -1,11 +1,13 @@
 import numpy as np
-import seaborn.objects as so
-
+import polars as pl
 from glob import glob
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+sns.set()
 
 
 class Hist:
-
     def __init__(self, low: int | float, high: int | float, n_bins: int):
         self.low = low
         self.high = high
@@ -24,7 +26,6 @@ class Hist:
         self.counts[bin_n] += 1
 
     def fit(self):
-
         def mse(x, y, k):
             return np.square(y - self.sigmoid(k * x)).mean()
 
@@ -32,8 +33,8 @@ class Hist:
         y = self.weights / self.counts
 
         min_ = 0.0
-        max_ = 0.1
-        delta = 0.01
+        max_ = 10
+        delta = 0.1
         best = mse(x, y, min_)
 
         for _ in range(10):
@@ -55,18 +56,66 @@ class Hist:
     def sigmoid(x):
         return 1 / (1 + np.exp(-x))
 
+    def plot(self, scale):
+        x = np.linspace(self.low, self.high, self.n_bins)
+        # ax = sns.barplot(x=x, y=self.counts)
+        sns.lineplot(x=x, y=self.sigmoid(scale * x))
+        sns.lineplot(x=x, y=self.weights / self.counts)
+
+        plt.show()
+
+
+def sigmoid(x):
+    return 1 / (1 + np.exp(-x))
+
+
+def fit(x, y):
+    def mse(x, y, k):
+        return np.square(y - sigmoid(k * x)).mean()
+
+    min_ = 0.0
+    max_ = 10
+    delta = 0.1
+    best = mse(x, y, min_)
+
+    for _ in range(10):
+        value = min_
+        while value < max_:
+            error = mse(x, y, value)
+            if error <= best:
+                best = error
+                min_ = value
+            value += delta
+
+        max_ = min_ + delta
+        min_ = min_ - delta
+        delta /= 10
+
+    return min_
+
 
 if __name__ == "__main__":
-    hist = Hist(-1500, 1500, 500)
+    from tqdm import tqdm
 
-    for filename in glob(f"data/*"):
-        with open(filename, "r") as file:
-            for line in file:
-                fen, score, result = line.split(",")
-                score = int(score)
-                result = float(result)
-                hist.fill(score, result)
+    hist = Hist(-1500, 1500, 50)
 
-    print(hist.fit())
+    for filename in tqdm(glob("training/*")):
+        data = (
+            pl.scan_parquet(filename)
+            # pl.scan_csv(
+            #     filename,
+            #     has_header=False,
+            #     new_columns=["fen", "cp", "result"],
+            # )
+            .select("cp", "result")
+            .cast({"cp": pl.Int64, "result": pl.Float64})
+            .collect()
+            .rows()
+        )
 
+        for cp, result in data:
+            hist.fill(cp, result)
 
+    scaling = hist.fit()
+    print(1 / scaling)
+    hist.plot(scaling)

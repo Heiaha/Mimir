@@ -4,4 +4,4 @@ polars~=0.20.25
 PyYAML~=6.0.1
 seaborn~=0.13.2
 torch~=2.3.0
-tqdm~=4.66.4
+tqdm~=4.67.1

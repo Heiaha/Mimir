@@ -1,5 +1,5 @@
 chess~=1.10.0
-numpy~=2.2.0
+numpy~=2.2.2
 polars~=1.17.1
 PyYAML~=6.0.1
 seaborn~=0.13.2

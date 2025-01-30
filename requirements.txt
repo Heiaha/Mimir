@@ -3,5 +3,5 @@ numpy~=2.2.0
 polars~=1.17.1
 PyYAML~=6.0.1
 seaborn~=0.13.2
-torch~=2.5.1
+torch~=2.6.0
 tqdm~=4.67.1

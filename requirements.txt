@@ -1,6 +1,6 @@
 chess~=1.10.0
 numpy~=2.2.0
-polars~=1.17.1
+polars~=1.23.0
 PyYAML~=6.0.1
 seaborn~=0.13.2
 torch~=2.5.1

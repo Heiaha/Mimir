@@ -4,16 +4,6 @@ import torch.nn as nn
 
 import math
 
-class CustomFakeQuant(nn.Module):
-    def __init__(self, factor: float):
-        super().__init__()
-        self.factor = factor
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        quantized = torch.round(x * self.factor) / self.factor
-        # Use STE: Pass fake quant output but use original gradient for backward pass
-        return x + (quantized - x).detach()
-
 
 class NNUE(nn.Module):
 

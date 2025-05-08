@@ -2,9 +2,9 @@ model:
   L1: 256
 
 scaling:
-  lambda_: 0.8
+  lambda_: 1.0
   nnue_2_score: 400
-  cp_scaling: 312.81
+  cp_scaling: 312.93
 
 training:
   batch_size: 8192
@@ -13,3 +13,5 @@ training:
   training_dir: training
   testing_dir: testing
   save_dir: nets
+
+#load: nets/2025-05-06T06-58-00/model_checkpoint_76.pth

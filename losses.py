@@ -1,4 +1,5 @@
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 class ScaledMSELoss(nn.Module):
@@ -8,13 +9,12 @@ class ScaledMSELoss(nn.Module):
         self.nnue_2_score = nnue_2_score
         self.cp_scaling = cp_scaling
 
-    def forward(self, pred, cp, result):
+    def forward(self, pred, batch):
         wdl_pred = (pred * self.nnue_2_score / self.cp_scaling).sigmoid()
-        wdl_cp = (cp / self.cp_scaling).sigmoid()
+        wdl_cp = (batch["cp"] / self.cp_scaling).sigmoid()
+        wdl_target = self.lambda_ * wdl_cp + (1 - self.lambda_) * batch["result"]
 
-        wdl_target = self.lambda_ * wdl_cp + (1 - self.lambda_) * result
-
-        return (wdl_pred - wdl_target).square().mean()
+        return F.mse_loss(wdl_pred, wdl_target)
 
 
 class ScaledCELoss(nn.Module):

@@ -1,3 +1,4 @@
+import chess
 import contextlib
 import os
 import os.path
@@ -8,7 +9,14 @@ import polars as pl
 from glob import glob
 from tqdm import tqdm
 
-from fen_parser import fen_to_vec
+from fen_parser import fen_to_indices
+
+
+def convert_to_parquet(directory):
+    for filename in tqdm(glob(f"{directory}/*.json"), desc=f"Converting {directory}"):
+        output_file = filename.replace(".json", ".parquet")
+        pl.read_ndjson(filename).write_parquet(output_file)
+        os.remove(filename)
 
 
 def interleave(*input_globs, train_frac=0.95, size_per_file_mb=100):
@@ -40,30 +48,23 @@ def interleave(*input_globs, train_frac=0.95, size_per_file_mb=100):
                     new_columns=["fen", "cp", "result"],
                 )
                 .cast({"cp": pl.Int64, "result": pl.Float64})
+                .filter(
+                    pl.col("fen").str.split(" ").list.get(5).cast(pl.Int32) >= 14
+                )
                 .sample(fraction=1.0, shuffle=True)
                 .rows()
             )
 
             for fen, cp, result in lines:
-                indices = fen_to_vec(fen)
+                white_move = "w" in fen
+
+                stm_indices, nstm_indices = fen_to_indices(fen)
 
                 position_str = json.dumps(
-                    {"indices": indices, "cp": cp, "result": result}
+                    {"stm_indices": stm_indices, "nstm_indices": nstm_indices, "cp": cp if white_move else -cp, "result": result if white_move else 1.0 - result}
                 )
+                output_files = training_files if random.random() < train_frac else testing_files
+                random.choice(output_files).write(position_str + "\n")
 
-                if random.random() < train_frac:
-                    random.choice(training_files).write(position_str + "\n")
-                else:
-                    random.choice(testing_files).write(position_str + "\n")
-
-    for filename in tqdm(glob("training/*")):
-        pl.read_ndjson(filename).write_parquet(filename.replace(".json", ".parquet"))
-        os.remove(filename)
-
-    for filename in tqdm(glob("testing/*")):
-        pl.read_ndjson(filename).write_parquet(filename.replace(".json", ".parquet"))
-        os.remove(filename)
-
-
-if __name__ == "__main__":
-    interleave("data/lichess_elite/scored/*", train_frac=0.95)
+    convert_to_parquet("training")
+    convert_to_parquet("testing")

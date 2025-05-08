@@ -6,46 +6,53 @@ import yaml
 
 import losses
 from model import NNUE
-from dataset import PositionVectorIterableDataset, Batch
+from dataset import PositionVectorIterableDataset
 from torch.utils.data import DataLoader
-from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch.optim.lr_scheduler import ReduceLROnPlateau, ExponentialLR
 from glob import glob
 from tqdm import tqdm
-from math import isclose
 
+EPOCHS = 100
 
-def train_loop(model, dataloader, loss_fn, optimizer, device):
+def train_loop(model, dataloader, loss_fn, optimizer, device, epoch):
     model.train()
+    total_loss = 0
+    pbar = tqdm(dataloader, desc=f"Training Epoch {epoch}", leave=False)
+    for idx, batch in enumerate(pbar):
+        batch = {k: v.to(device) for k, v in batch.items()}
 
-    for batch_data in tqdm(dataloader):
-        batch = Batch(*batch_data).to(device)
-
-        optimizer.zero_grad()
-        pred = model(batch.x)
-        loss = loss_fn(pred, batch.cp, batch.result)
+        pred = model(batch)
+        loss = loss_fn(pred, batch)
 
         # Backpropagation
         loss.backward()
         optimizer.step()
+        optimizer.zero_grad()
+
+        total_loss += loss.item()
+
+        pbar.set_postfix({
+            "loss": total_loss / (idx + 1),
+            "lr": optimizer.param_groups[0]["lr"],
+        })
 
         with torch.no_grad():
             for name, param in model.named_parameters():
-                if "psqt" not in name:
-                    param.clamp_(-1.98, 1.98)
+                param.clamp_(-1.98, 1.98)
 
 
 @torch.no_grad()
-def test_loop(model, dataloader, loss_fn, device):
+def test_loop(model, dataloader, loss_fn, device, epoch):
     model.eval()
-    n_batches = len(dataloader)
-
+    pbar = tqdm(dataloader, desc=f"Testing Epoch {epoch}", leave=True)
     loss = 0
-    for batch_data in dataloader:
-        batch = Batch(*batch_data).to(device)
-        pred = model(batch.x)
-        loss += loss_fn(pred, batch.cp, batch.result)
+    for idx, batch in enumerate(pbar):
+        batch = {k: v.to(device) for k, v in batch.items()}
+        pred = model(batch)
+        loss += loss_fn(pred, batch).item()
+        pbar.set_postfix({"loss": loss / (idx + 1)})
 
-    return loss / n_batches
+    return loss / len(dataloader)
 
 
 def main(config_filename):
@@ -56,14 +63,18 @@ def main(config_filename):
     print(f"Running on cuda: {torch.cuda.is_available()}")
     training_files = glob(f"{config['training']['training_dir']}/*")
     testing_files = glob(f"{config['training']['testing_dir']}/*")
-    save_path = os.path.join(
+
+    checkpoint_path = config.get("load")
+
+    save_path = os.path.dirname(checkpoint_path) if checkpoint_path else os.path.join(
         config["training"]["save_dir"],
         datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H-%M-%S"),
     )
-    os.mkdir(save_path)
+    if not os.path.exists(save_path):
+        os.mkdir(save_path)
 
     training_dataset = PositionVectorIterableDataset(training_files)
-    validation_dataset = PositionVectorIterableDataset(testing_files)
+    testing_dataset = PositionVectorIterableDataset(testing_files)
 
     training_dataloader = DataLoader(
         training_dataset,
@@ -73,7 +84,7 @@ def main(config_filename):
     )
 
     testing_dataloader = DataLoader(
-        validation_dataset,
+        testing_dataset,
         batch_size=config["training"]["batch_size"],
         num_workers=min(len(testing_files), config["training"]["workers"]),
         drop_last=True,
@@ -81,20 +92,26 @@ def main(config_filename):
 
     model = NNUE(**config["model"]).to(config["training"]["device"])
     loss_fn = losses.ScaledMSELoss(**config["scaling"])
-    optimizer = optim.Adam(model.parameters(), lr=1e-3)
-    scheduler = ReduceLROnPlateau(optimizer, factor=0.1, patience=0, threshold=0)
+    optimizer = optim.Adam(model.parameters(), lr=5e-3)
+    scheduler = ExponentialLR(optimizer, gamma=0.9)
+    starting_epoch = 0
 
-    best_test_loss = float("inf")
+    if checkpoint_path:
+        checkpoint_info = torch.load(checkpoint_path)
+        model.load_state_dict(checkpoint_info["model_state_dict"])
+        optimizer.load_state_dict(checkpoint_info["optimizer_state_dict"])
+        scheduler.load_state_dict(checkpoint_info["scheduler_state_dict"])
+        starting_epoch = checkpoint_info["epoch"] + 1
 
-    for epoch in range(100):
+    for epoch in range(starting_epoch, EPOCHS):
 
         train_loop(
-            model, training_dataloader, loss_fn, optimizer, config["training"]["device"]
+            model, training_dataloader, loss_fn, optimizer, config["training"]["device"], epoch
         )
         test_loss = test_loop(
-            model, testing_dataloader, loss_fn, config["training"]["device"]
+            model, testing_dataloader, loss_fn, config["training"]["device"], epoch
         )
-        scheduler.step(test_loss)
+        scheduler.step()
         lr, *_ = scheduler.get_last_lr()
 
         torch.save(
@@ -109,15 +126,6 @@ def main(config_filename):
         )
 
         model.save_quantized(epoch, save_path)
-
-        print(f"Epoch {epoch} validation loss: {test_loss}")
-        print(f"New lr: {lr}")
-
-        if test_loss < best_test_loss:
-            best_test_loss = test_loss
-        elif isclose(lr, 1e-6):
-            print("Finished Training")
-            return
 
 
 if __name__ == "__main__":

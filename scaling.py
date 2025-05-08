@@ -102,11 +102,6 @@ if __name__ == "__main__":
     for filename in tqdm(glob("training/*")):
         data = (
             pl.scan_parquet(filename)
-            # pl.scan_csv(
-            #     filename,
-            #     has_header=False,
-            #     new_columns=["fen", "cp", "result"],
-            # )
             .select("cp", "result")
             .cast({"cp": pl.Int64, "result": pl.Float64})
             .collect()

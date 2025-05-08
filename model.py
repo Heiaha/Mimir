@@ -26,7 +26,7 @@ class NNUE(nn.Module):
     def forward(self, batch):
 
         bucket_idx = (
-            (batch["stm_indices"].ne(self.N_FEATURES).sum(dim=-1, keepdim=True) - 2)
+            (batch["stm_indices"].ne(self.N_FEATURES).sum(dim=-1, keepdim=True) - 1)
             .div(4, rounding_mode="floor")
             .long()
         )

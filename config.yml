@@ -1,17 +1,18 @@
 model:
-  L1: 256
+  L1: 128
+  N_BUCKETS: 8
 
 scaling:
   lambda_: 1.0
   nnue_2_score: 400
-  cp_scaling: 312.93
+  cp_scaling: 400
 
 training:
   batch_size: 8192
-  workers: 8
+  workers: 0
   device: cuda
   training_dir: training
   testing_dir: testing
   save_dir: nets
 
-#load: nets/2025-05-06T06-58-00/model_checkpoint_76.pth
+#load: nets/2025-07-12T18-29-44/model_checkpoint_32.pth

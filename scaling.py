@@ -4,6 +4,8 @@ from glob import glob
 import seaborn as sns
 import matplotlib.pyplot as plt
 
+from dataset import PositionVectorIterableDataset
+
 sns.set()
 
 
@@ -97,19 +99,15 @@ def fit(x, y):
 if __name__ == "__main__":
     from tqdm import tqdm
 
-    hist = Hist(-1500, 1500, 50)
+    hist = Hist(-1000, 1000, 50)
+    filenames = glob("training/*")
 
-    for filename in tqdm(glob("training/*")):
-        data = (
-            pl.scan_parquet(filename)
-            .select("cp", "result")
-            .cast({"cp": pl.Int64, "result": pl.Float64})
-            .collect()
-            .rows()
-        )
+    dataset = PositionVectorIterableDataset(filenames, 8092)
 
-        for cp, result in data:
-            hist.fill(cp, result)
+    for i, data in enumerate(dataset):
+        if i >= 10_000_000:
+            break
+        hist.fill(data["cp"], data["result"])
 
     scaling = hist.fit()
     print(1 / scaling)

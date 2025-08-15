@@ -71,6 +71,9 @@ def score(input_filename, *, output_dir, engine, depth):
     output_basename = os.path.basename(input_filename).replace(".pgn", ".csv")
     output_filename = os.path.join(output_dir, output_basename)
 
+    if os.path.exists(output_filename):
+        return output_filename
+
     with open(input_filename, "r") as input_file, open(
         output_filename, "w"
     ) as output_file:
@@ -109,7 +112,7 @@ def score(input_filename, *, output_dir, engine, depth):
 
 
 def main(func, *, input_glob, n_concurrent, func_kwargs: dict):
-    filenames = [filename for filename in sorted(glob(input_glob), reverse=True)]
+    filenames = [filename for filename in sorted(glob(input_glob), reverse=True) if "2021" in filename]
 
     with concurrent.futures.ProcessPoolExecutor() as executor, tqdm(
         total=len(filenames)
@@ -135,19 +138,11 @@ def main(func, *, input_glob, n_concurrent, func_kwargs: dict):
 if __name__ == "__main__":
     main(
         score,
-        input_glob="data/ccrl/split/*",
+        input_glob="data/lichess_elite/split/*",
         n_concurrent=5,
         func_kwargs={
-            "output_dir": "data/ccrl/scored",
+            "output_dir": "data/lichess_elite/scored",
             "depth": 8,
             "engine": "weiawaga_v7.exe",
         },
     )
-    # for input_filename in [
-    #     "data/pgn/CCRL.40-2.Archive.[2165313].pgn",
-    #     "data/pgn/CCRL-404.[1272104].pgn"
-    # ]:
-    #     split_file(
-    #         input_filename,
-    #         "data/pgn/ccrl"
-    #     )

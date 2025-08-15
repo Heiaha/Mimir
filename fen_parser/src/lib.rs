@@ -71,6 +71,9 @@ fn fen_to_indices(fen: &str) -> PyResult<(Vec<usize>, Vec<usize>)> {
         }
     }
 
+    stm_indices.resize(32, 768);
+    nstm_indices.resize(32, 768);
+
     Ok((stm_indices, nstm_indices))
 }
 

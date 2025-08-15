@@ -8,17 +8,18 @@ import losses
 from model import NNUE
 from dataset import PositionVectorIterableDataset
 from torch.utils.data import DataLoader
-from torch.optim.lr_scheduler import ReduceLROnPlateau, ExponentialLR
+from torch.optim.lr_scheduler import ExponentialLR
 from glob import glob
 from tqdm import tqdm
 
-EPOCHS = 100
+EPOCHS = 50
 
 def train_loop(model, dataloader, loss_fn, optimizer, device, epoch):
     model.train()
     total_loss = 0
     pbar = tqdm(dataloader, desc=f"Training Epoch {epoch}", leave=False)
     for idx, batch in enumerate(pbar):
+
         batch = {k: v.to(device) for k, v in batch.items()}
 
         pred = model(batch)
@@ -70,8 +71,6 @@ def main(config_filename):
         config["training"]["save_dir"],
         datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H-%M-%S"),
     )
-    if not os.path.exists(save_path):
-        os.mkdir(save_path)
 
     training_dataset = PositionVectorIterableDataset(training_files)
     testing_dataset = PositionVectorIterableDataset(testing_files)
@@ -81,6 +80,7 @@ def main(config_filename):
         batch_size=config["training"]["batch_size"],
         num_workers=min(len(training_files), config["training"]["workers"]),
         drop_last=True,
+        collate_fn=PositionVectorIterableDataset.fast_collate,
     )
 
     testing_dataloader = DataLoader(
@@ -88,12 +88,16 @@ def main(config_filename):
         batch_size=config["training"]["batch_size"],
         num_workers=min(len(testing_files), config["training"]["workers"]),
         drop_last=True,
+        collate_fn=PositionVectorIterableDataset.fast_collate,
     )
 
     model = NNUE(**config["model"]).to(config["training"]["device"])
+
+    print(f"Number of parameters: {sum(p.numel() for p in model.parameters())}")
+
     loss_fn = losses.ScaledMSELoss(**config["scaling"])
     optimizer = optim.Adam(model.parameters(), lr=5e-3)
-    scheduler = ExponentialLR(optimizer, gamma=0.9)
+    scheduler = ExponentialLR(optimizer, gamma=0.85)
     starting_epoch = 0
 
     if checkpoint_path:
@@ -102,6 +106,11 @@ def main(config_filename):
         optimizer.load_state_dict(checkpoint_info["optimizer_state_dict"])
         scheduler.load_state_dict(checkpoint_info["scheduler_state_dict"])
         starting_epoch = checkpoint_info["epoch"] + 1
+
+    if not os.path.exists(save_path):
+        os.mkdir(save_path)
+
+    model.save_quantized(-1, save_path)
 
     for epoch in range(starting_epoch, EPOCHS):
 
@@ -113,6 +122,9 @@ def main(config_filename):
         )
         scheduler.step()
         lr, *_ = scheduler.get_last_lr()
+
+        if not os.path.exists(save_path):
+            os.mkdir(save_path)
 
         torch.save(
             {

@@ -1,4 +1,4 @@
-chess~=1.10.0
+chess~=1.11.2
 numpy~=2.2.0
 PyYAML~=6.0.1
 seaborn~=0.13.2

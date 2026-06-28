@@ -1,6 +1,6 @@
-import os
 import torch
 import torch.nn as nn
+from pathlib import Path
 
 
 class NNUE(nn.Module):
@@ -70,7 +70,7 @@ class NNUE(nn.Module):
                 for i in range(0, len(lst), n)
             ]
 
-        file_path = os.path.join(path, f"model_parameters_{epoch}.rs")
+        file_path = Path(path) / f"model_parameters_{epoch}.rs"
         with open(file_path, "w") as file:
             file.write("use wide::i16x16;\n\n")
 

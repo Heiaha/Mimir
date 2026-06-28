@@ -1,6 +1,6 @@
 import numpy as np
 import polars as pl
-from glob import glob
+from pathlib import Path
 import seaborn as sns
 import matplotlib.pyplot as plt
 
@@ -26,6 +26,18 @@ class Hist:
         bin_n = self.n_bins * (value - self.low) // (self.high - self.low)
         self.weights[bin_n] += weight
         self.counts[bin_n] += 1
+
+    def fill_batch(self, values, weights):
+        values = np.asarray(values, dtype=np.float64).ravel()
+        weights = np.asarray(weights, dtype=np.float64).ravel()
+
+        mask = (values >= self.low) & (values < self.high)
+        values, weights = values[mask], weights[mask]
+
+        bins = ((values - self.low) / (self.high - self.low) * self.n_bins).astype(int)
+        bins = np.clip(bins, 0, self.n_bins - 1)
+        self.weights += np.bincount(bins, weights=weights, minlength=self.n_bins)
+        self.counts += np.bincount(bins, minlength=self.n_bins)
 
     def fit(self):
         def mse(x, y, k):
@@ -100,14 +112,12 @@ if __name__ == "__main__":
     from tqdm import tqdm
 
     hist = Hist(-1000, 1000, 50)
-    filenames = glob("training/*")
+    filenames = sorted(Path("training").glob("*"))
 
     dataset = PositionVectorIterableDataset(filenames, 8092)
 
-    for i, data in enumerate(dataset):
-        if i >= 10_000_000:
-            break
-        hist.fill(data["cp"], data["result"])
+    for data in tqdm(dataset):
+        hist.fill_batch(data["cp"], data["result"])
 
     scaling = hist.fit()
     print(1 / scaling)

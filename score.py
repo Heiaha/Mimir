@@ -1,4 +1,3 @@
-import os
 import time
 import concurrent.futures
 
@@ -7,6 +6,7 @@ import chess.engine
 import chess.pgn
 
 from glob import glob
+from pathlib import Path
 from tqdm import tqdm
 
 
@@ -15,8 +15,8 @@ def split_file(input_filename, output_dir, games_per_file=10_000):
     file_n = 0
 
     # Construct initial output filename
-    base_output_filename, _ = os.path.splitext(os.path.basename(input_filename))
-    output_filename = os.path.join(output_dir, f"{base_output_filename}_{file_n}.pgn")
+    base_output_filename = Path(input_filename).stem
+    output_filename = Path(output_dir) / f"{base_output_filename}_{file_n}.pgn"
 
     with open(input_filename, "r") as input_file, open(
         output_filename, "w"
@@ -37,9 +37,7 @@ def split_file(input_filename, output_dir, games_per_file=10_000):
                 file_n += 1
                 count = 0
                 output_file.close()
-                output_filename = os.path.join(
-                    output_dir, f"{base_output_filename}_{file_n}.pgn"
-                )
+                output_filename = Path(output_dir) / f"{base_output_filename}_{file_n}.pgn"
                 output_file = open(output_filename, "w")
 
 
@@ -68,10 +66,10 @@ def is_loud(board: chess.Board, move: chess.Move):
 
 def score(input_filename, *, output_dir, engine, depth):
     engine = chess.engine.SimpleEngine.popen_uci(engine)
-    output_basename = os.path.basename(input_filename).replace(".pgn", ".csv")
-    output_filename = os.path.join(output_dir, output_basename)
+    output_basename = Path(input_filename).with_suffix(".csv").name
+    output_filename = Path(output_dir) / output_basename
 
-    if os.path.exists(output_filename):
+    if output_filename.exists():
         return output_filename
 
     with open(input_filename, "r") as input_file, open(

@@ -18,28 +18,16 @@ class ScaledMSELoss(nn.Module):
 
 
 class ScaledCELoss(nn.Module):
-
-    EPSILON = 1e-12
-
     def __init__(self, lambda_: float, nnue_2_score: int, cp_scaling: int, **kwargs):
         super().__init__()
         self.lambda_ = lambda_
         self.nnue_2_score = nnue_2_score
         self.cp_scaling = cp_scaling
 
-    def forward(self, pred, cp, result):
-        wdl_pred = (pred * self.nnue_2_score / self.cp_scaling).sigmoid()
-        wdl_cp = (cp / self.cp_scaling).sigmoid()
+    def forward(self, pred, batch):
+        wdl_cp = (batch["cp"] / self.cp_scaling).sigmoid()
+        wdl_target = self.lambda_ * wdl_cp + (1 - self.lambda_) * batch["result"]
 
-        wdl_target = self.lambda_ * wdl_cp + (1 - self.lambda_) * result
-
-        return (
-            (
-                wdl_target * (wdl_target + self.EPSILON).log()
-                + (1 - wdl_target) * (1 - wdl_target + self.EPSILON).log()
-            )
-            - (
-                wdl_target * (wdl_pred + self.EPSILON).log()
-                + (1 - wdl_target) * (1 - wdl_pred + self.EPSILON).log()
-            )
-        ).mean()
+        return F.binary_cross_entropy_with_logits(
+            pred * self.nnue_2_score / self.cp_scaling, wdl_target
+        )

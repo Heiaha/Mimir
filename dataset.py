@@ -1,6 +1,6 @@
 import numpy as np
-import os
 import torch
+from pathlib import Path
 
 import warnings
 warnings.filterwarnings(
@@ -22,14 +22,21 @@ class PositionVectorIterableDataset(IterableDataset):
         ("result", np.float16, 1),
     ])
 
-    def __init__(self, filenames):
+    def __init__(self, filenames, batch_size):
         super().__init__()
         self.filenames = filenames
+        self.batch_size = batch_size
 
     def _stream_file(self, filepath):
         rows = np.fromfile(filepath, dtype=self.DTYPE)
         np.random.shuffle(rows)
-        yield from rows
+        n = len(rows) - len(rows) % self.batch_size  # drop last partial batch
+        for i in range(0, n, self.batch_size):
+            chunk = rows[i:i + self.batch_size]
+            yield {
+                key: torch.from_numpy(np.ascontiguousarray(chunk[key]))
+                for key in self.DTYPE.names
+            }
 
     def __iter__(self):
         worker_info = torch.utils.data.get_worker_info()
@@ -46,13 +53,9 @@ class PositionVectorIterableDataset(IterableDataset):
             yield from self._stream_file(filename)
 
     def __len__(self):
-        total_bytes = sum(os.path.getsize(filename) for filename in self.filenames)
-        assert total_bytes % self.DTYPE.itemsize == 0, "File size must be a multiple of row size."
-        return total_bytes // self.DTYPE.itemsize
-
-    @staticmethod
-    def fast_collate(batch):
-        return {
-            key: torch.from_numpy(np.stack([sample[key] for sample in batch]))
-            for key in PositionVectorIterableDataset.DTYPE.names
-        }
+        # Number of (drop-last) batches across all files -- matches what __iter__
+        # actually yields, so len(dataloader) * epochs is exact for the scheduler.
+        return sum(
+            Path(filename).stat().st_size // self.DTYPE.itemsize // self.batch_size
+            for filename in self.filenames
+        )

@@ -89,7 +89,7 @@ fn indices_to_vec(indices: Vec<usize>) -> PyResult<[f32; 768]> {
 }
 
 #[pymodule]
-fn fen_parser(_py: Python, m: &PyModule) -> PyResult<()> {
+fn fen_parser(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(fen_to_indices, m)?)?;
     m.add_function(wrap_pyfunction!(indices_to_vec, m)?)?;
     Ok(())

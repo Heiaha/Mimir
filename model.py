@@ -47,85 +47,30 @@ class NNUE(nn.Module):
         return out
 
     def save_quantized(self, epoch: int, path: str) -> None:
+        # Emit a raw little-endian blob the engine embeds via include_bytes!:
+        # all i16 weight sections first (each stays 16-aligned so the Rust side
+        # can reinterpret them as i16x16), then the i16 bias section. Input
+        # weights/bias are scale QA; hidden weights/biases are scale QB. Section
+        # order must match Network::new in nnue.rs.
+        QA, QB = 255, 64
 
-        def quantize(x, factor):
-            return x.mul(factor).round().to(torch.int16)
+        def i16(t, factor):
+            return torch.round(t * factor).to(torch.int16).flatten()
 
-        def chunk_into_i16xn(lst: list[int], n: int) -> list[str]:
-            """
-            Convert a list of integers into SIMD-style i16xN chunks for Rust.
+        weights = [
+            i16(self.input_layer.weight[: self.N_FEATURES], QA),  # drop padding row
+            i16(self.input_layer_bias, QA),
+        ]
+        biases = []
+        for layer in self.hidden_layer:
+            weights.append(i16(layer.weight, QB))
+            biases.append(i16(layer.bias, QB))
 
-            Parameters:
-                lst (list[int]): Flat list of quantized i16 values.
-                n (int): The SIMD width (e.g., 8, 16).
+        blob = torch.cat(weights).cpu().numpy().astype("<i2").tobytes()
+        blob += torch.cat(biases).cpu().numpy().astype("<i2").tobytes()
 
-            Returns:
-                list[str]: A list of strings like `i16xN::new([...])`
-            """
-            if len(lst) % n != 0:
-                lst += [0] * (n - len(lst) % n)
-
-            return [
-                f"i16x{n}::new([{', '.join(str(value) for value in lst[i: i + n])}])"
-                for i in range(0, len(lst), n)
-            ]
-
-        file_path = Path(path) / f"model_parameters_{epoch}.rs"
-        with open(file_path, "w") as file:
-            file.write("use wide::i16x16;\n\n")
-
-            # ------------------------------------------------------------------
-            # Input-layer embedding weights (2-D)
-            # ------------------------------------------------------------------
-            embed_name = "INPUT_LAYER_WEIGHT"
-            embed_tensor = self.input_layer.weight[: self.N_FEATURES]         # drop padding row
-            embed_factor = 255
-            embed_quant = quantize(embed_tensor, embed_factor).tolist()
-
-            n_rows = len(embed_quant)
-            n_cols = len(embed_quant[0]) if n_rows else 0
-            file.write(
-                f"pub static {embed_name}: [[i16x16; {(n_cols + 15) // 16}]; {n_rows}] = [\n"
-            )
-            for row in embed_quant:
-                chunks = chunk_into_i16xn(list(row), 16)
-                file.write(f"    [{', '.join(chunks)}],\n")
-            file.write("];\n\n")
-
-            # ------------------------------------------------------------------
-            # Input-layer bias (1-D)
-            # ------------------------------------------------------------------
-            bias_name = "INPUT_LAYER_BIAS"
-            bias_factor = 255
-            bias_quant = quantize(self.input_layer_bias, bias_factor).tolist()
-            bias_chunks = chunk_into_i16xn(bias_quant, 16)
-            file.write(
-                f"pub static {bias_name}: [i16x16; {len(bias_chunks)}] = "
-                f"[{', '.join(bias_chunks)}];\n\n"
-            )
-
-            # ------------------------------------------------------------------
-            # Hidden buckets (weights & biases)
-            # ------------------------------------------------------------------
-            for idx, layer in enumerate(self.hidden_layer):
-                # Weights
-                w_name = f"HIDDEN_LAYER_{idx}_WEIGHT"
-                w_factor = 64
-                w_quant = quantize(layer.weight, w_factor).flatten().tolist()
-                w_chunks = chunk_into_i16xn(w_quant, 16)
-                file.write(
-                    f"pub static {w_name}: [i16x16; {len(w_chunks)}] = "
-                    f"[{', '.join(w_chunks)}];\n\n"
-                )
-
-                # Bias (single scalar per bucket)
-                b_name = f"HIDDEN_LAYER_{idx}_BIAS"
-                b_factor = 64
-                b_values = quantize(layer.bias, b_factor).flatten().tolist()
-                file.write(
-                    f"pub static {b_name}: [i16; {len(b_values)}] = "
-                    f"[{', '.join(str(value) for value in b_values)}];\n\n"
-                )
+        with open(Path(path) / f"network_{epoch}.bin", "wb") as file:
+            file.write(blob)
 
 
 if __name__ == "__main__":

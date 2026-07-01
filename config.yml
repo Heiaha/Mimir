@@ -3,9 +3,9 @@ model:
   N_BUCKETS: 8
 
 scaling:
-  lambda_: 0.8
+  lambda_: 1.0
   nnue_2_score: 400
-  cp_scaling: 157.41
+  cp_scaling: 284.61
 
 training:
   batch_size: 8192

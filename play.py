@@ -5,6 +5,8 @@ from pathlib import Path
 
 import chess
 import chess.engine
+import chess.syzygy
+import polars as pl
 from tqdm import tqdm
 
 ENGINE = "Weiawaga.exe"
@@ -12,11 +14,22 @@ DEPTH = 8
 ROWS_PER_FILE = 100_000
 OPENING_PLIES = 8
 ADJ_SCORE = 1000
-MAX_PLIES = 400
+MAX_PLIES = 200
 OUTPUT_DIR = "data/selfplay"
 N_CONCURRENT = 12
 
-RESULTS = {"1-0": 1.0, "0-1": 0.0, "1/2-1/2": 0.5}
+SYZYGY_OUTCOMES = {-2: 0.0, -1: 0.5, 0: 0.5, 1: 0.5, 2: 1.0}
+OUTCOMES = {"1-0": 1.0, "0-1": 0.0, "1/2-1/2": 0.5}
+
+SYZYGY_PATH = "syzygy"
+TB_MAX_MEN = 5
+
+# Each worker process opens its own handle on import. If the directory is absent,
+# adjudication is simply skipped (tb_outcome returns None) and play falls back to
+# the played-out / cp-adjudicated outcome, exactly as before.
+_tablebase = (
+    chess.syzygy.open_tablebase(SYZYGY_PATH) if Path(SYZYGY_PATH).is_dir() else None
+)
 
 
 def is_loud(board: chess.Board, move: chess.Move) -> bool:
@@ -27,6 +40,18 @@ def is_loud(board: chess.Board, move: chess.Move) -> bool:
         or board.is_check()
         or board.gives_check(move)
     )
+
+
+def tb_outcome(board: chess.Board) -> float | None:
+    """Exact White-perspective WDL in {0.0, 0.5, 1.0} for <=TB_MAX_MEN positions, else None."""
+    if _tablebase is None or chess.popcount(board.occupied) > TB_MAX_MEN:
+        return None
+    try:
+        wdl = _tablebase.probe_wdl(board)  # side-to-move perspective, -2..2
+    except KeyError:
+        return None  # material not covered by the tables we have
+    score = SYZYGY_OUTCOMES[wdl]  # cursed/blessed -> draw
+    return score if board.turn == chess.WHITE else 1.0 - score
 
 
 def random_opening(plies: int) -> chess.Board:
@@ -52,19 +77,19 @@ def play_one_game() -> list[dict]:
         if board.is_game_over(claim_draw=True):
             return []
 
-        game = object()  # Makes python-chess send ucinewgame for this game.
-        samples: list[tuple[str, int]] = []
-        result = None
+        game_id = uuid.uuid4().hex  # tags every sample from this game, for per-game analysis
+        samples: list[dict] = []
+        outcome = None
 
         for _ in range(MAX_PLIES):
             if board.is_game_over(claim_draw=True):
+                outcome = OUTCOMES.get(board.result(claim_draw=True), 0.5)
                 break
 
             analysis = engine.play(
                 board,
                 limit=chess.engine.Limit(depth=DEPTH),
                 info=chess.engine.INFO_SCORE,
-                game=game,
             )
 
             move = analysis.move
@@ -76,21 +101,26 @@ def play_one_game() -> list[dict]:
                 cp = score.white().score()
 
                 if not is_loud(board, move):
-                    samples.append((board.fen(), cp))
+                    samples.append({"fen": board.fen(), "cp": cp})
+
+                # Exact verdict the moment we reach the tablebase. Checked before the
+                # cp cut so it overrides the guess, and it back-propagates to every
+                # position already stored for this game -- not just the <=5-man one.
+                if (tb := tb_outcome(board)) is not None:
+                    outcome = tb
+                    break
 
                 # Adjudicate clearly decided games to stop shuffling.
                 if abs(cp) >= ADJ_SCORE:
-                    result = 1.0 if cp > 0 else 0.0
+                    outcome = 1.0 if cp > 0 else 0.0
                     break
 
             board.push(move)
 
-        # Unadjudicated games take their played-out result, defaulting to a draw
-        # if they ran past MAX_PLIES without finishing.
-        if result is None:
-            result = RESULTS.get(board.result(claim_draw=True), 0.5)
+        if outcome is None:
+            outcome = 0.5
 
-        return [{"fen": fen, "cp": cp, "result": result} for fen, cp in samples]
+        return [{**s, "game_id": game_id, "outcome": outcome} for s in samples]
 
     finally:
         engine.quit()
@@ -100,10 +130,7 @@ def main() -> None:
     output_dir = Path(OUTPUT_DIR)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    for stale in output_dir.glob("*.tmp"):
-        stale.unlink()
-
-    buffer: list[str] = []
+    buffer: list[dict] = []
 
     with concurrent.futures.ProcessPoolExecutor(
         max_workers=N_CONCURRENT
@@ -125,14 +152,14 @@ def main() -> None:
 
                 pbar.update(len(rows))
 
-                buffer.extend(f"{r['fen']},{r['cp']},{r['result']}" for r in rows)
+                buffer.extend(rows)
                 pending.add(executor.submit(play_one_game))
 
             # Flush whole shards; the trailing partial stays buffered for next time.
             while len(buffer) >= ROWS_PER_FILE:
                 name = uuid.uuid4().hex
-                output_path = output_dir / f"{name}.csv"
-                output_path.write_text("\n".join(buffer[:ROWS_PER_FILE]), encoding="utf-8")
+                output_path = output_dir / f"{name}.parquet"
+                pl.DataFrame(buffer[:ROWS_PER_FILE]).write_parquet(output_path, compression="zstd")
                 del buffer[:ROWS_PER_FILE]
 
 

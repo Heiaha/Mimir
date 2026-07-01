@@ -22,6 +22,10 @@ class NNUE(nn.Module):
             [nn.Linear(2 * hyperparameters["L1"], 1) for _ in range(hyperparameters["N_BUCKETS"])]
         )
 
+        self.virtual_layer = nn.Linear(2 * hyperparameters["L1"], 1)
+        nn.init.zeros_(self.virtual_layer.weight)
+        nn.init.zeros_(self.virtual_layer.bias)
+
         scale = self.N_FEATURES ** -0.5
 
         nn.init.uniform_(self.input_layer.weight, a=-scale, b=scale)
@@ -40,18 +44,12 @@ class NNUE(nn.Module):
 
         embeddings = torch.cat([stm_embeddings, nstm_embeddings], dim=-1).clamp(0, 1).square()
 
-        out = torch.cat([h(embeddings) for h in self.hidden_layer], dim=-1).gather(
-            -1, bucket_idx
-        )
+        out = torch.cat([h(embeddings) for h in self.hidden_layer], dim=-1)
+        out = (out + self.virtual_layer(embeddings)).gather(-1, bucket_idx)
 
         return out
 
     def save_quantized(self, epoch: int, path: str) -> None:
-        # Emit a raw little-endian blob the engine embeds via include_bytes!:
-        # all i16 weight sections first (each stays 16-aligned so the Rust side
-        # can reinterpret them as i16x16), then the i16 bias section. Input
-        # weights/bias are scale QA; hidden weights/biases are scale QB. Section
-        # order must match Network::new in nnue.rs.
         QA, QB = 255, 64
 
         def i16(t, factor):
@@ -63,8 +61,8 @@ class NNUE(nn.Module):
         ]
         biases = []
         for layer in self.hidden_layer:
-            weights.append(i16(layer.weight, QB))
-            biases.append(i16(layer.bias, QB))
+            weights.append(i16(layer.weight + self.virtual_layer.weight, QB))
+            biases.append(i16(layer.bias + self.virtual_layer.bias, QB))
 
         blob = torch.cat(weights).cpu().numpy().astype("<i2").tobytes()
         blob += torch.cat(biases).cpu().numpy().astype("<i2").tobytes()

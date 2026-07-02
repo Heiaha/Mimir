@@ -13,10 +13,15 @@ ENGINE = "Weiawaga.exe"
 DEPTH = 8
 ROWS_PER_FILE = 100_000
 OPENING_PLIES = 8
-ADJ_SCORE = 1000
-MAX_PLIES = 200
 OUTPUT_DIR = "data/selfplay"
 N_CONCURRENT = 12
+
+
+DRAW_ADJ_SCORE = 15
+DRAW_ADJ_PLIES = 8
+DRAW_ADJ_MIN_PLY = 80
+
+MAX_PLIES = 600
 
 SYZYGY_OUTCOMES = {-2: 0.0, -1: 0.5, 0: 0.5, 1: 0.5, 2: 1.0}
 OUTCOMES = {"1-0": 1.0, "0-1": 0.0, "1/2-1/2": 0.5}
@@ -24,9 +29,6 @@ OUTCOMES = {"1-0": 1.0, "0-1": 0.0, "1/2-1/2": 0.5}
 SYZYGY_PATH = "syzygy"
 TB_MAX_MEN = 5
 
-# Each worker process opens its own handle on import. If the directory is absent,
-# adjudication is simply skipped (tb_outcome returns None) and play falls back to
-# the played-out / cp-adjudicated outcome, exactly as before.
 _tablebase = (
     chess.syzygy.open_tablebase(SYZYGY_PATH) if Path(SYZYGY_PATH).is_dir() else None
 )
@@ -80,6 +82,7 @@ def play_one_game() -> list[dict]:
         game_id = uuid.uuid4().hex  # tags every sample from this game, for per-game analysis
         samples: list[dict] = []
         outcome = None
+        draw_streak = 0
 
         for _ in range(MAX_PLIES):
             if board.is_game_over(claim_draw=True):
@@ -97,28 +100,31 @@ def play_one_game() -> list[dict]:
                 break
 
             score = analysis.info.get("score")
-            if score is not None and not score.is_mate():
+
+            if score is not None and score.is_mate():
+                outcome = 1.0 if score.white().mate() > 0 else 0.0
+                break
+
+            if score is not None:
                 cp = score.white().score()
 
                 if not is_loud(board, move):
                     samples.append({"fen": board.fen(), "cp": cp})
 
-                # Exact verdict the moment we reach the tablebase. Checked before the
-                # cp cut so it overrides the guess, and it back-propagates to every
-                # position already stored for this game -- not just the <=5-man one.
                 if (tb := tb_outcome(board)) is not None:
                     outcome = tb
                     break
 
-                # Adjudicate clearly decided games to stop shuffling.
-                if abs(cp) >= ADJ_SCORE:
-                    outcome = 1.0 if cp > 0 else 0.0
+                draw_streak = draw_streak + 1 if abs(cp) <= DRAW_ADJ_SCORE else 0
+
+                if draw_streak >= DRAW_ADJ_PLIES and board.ply() >= DRAW_ADJ_MIN_PLY:
+                    outcome = 0.5
                     break
 
             board.push(move)
 
         if outcome is None:
-            outcome = 0.5
+            return []
 
         return [{**s, "game_id": game_id, "outcome": outcome} for s in samples]
 

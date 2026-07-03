@@ -37,7 +37,7 @@ def train_loop(model, dataloader, loss_fn, optimizer, scheduler, device, epoch):
         })
 
         with torch.no_grad():
-            for name, param in model.named_parameters():
+            for param in model.parameters():
                 param.clamp_(-1.98, 1.98)
 
 
@@ -112,7 +112,7 @@ def main(config_filename):
         cycle_momentum=False,
     )
 
-    starting_epoch = 0
+    starting_epoch = 1
     best_loss = float("inf")
 
     if checkpoint_path:

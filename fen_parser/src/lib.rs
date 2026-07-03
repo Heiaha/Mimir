@@ -9,9 +9,6 @@ const N_BASE_FEATURES: usize = 768;
 const N_KING_BUCKETS: usize = 4;
 const N_FEATURES: usize = N_KING_BUCKETS * N_BASE_FEATURES;
 
-// Buckets over the normalized own-king square (files a-d after mirroring):
-// back rank, second rank, ranks 3-4, ranks 5-8.
-// Must match king_bucket in Weiawaga's nnue.rs.
 fn king_bucket(ksq_norm: usize) -> usize {
     match ksq_norm >> 3 {
         0 => 0,
@@ -161,8 +158,9 @@ mod tests {
     // be updated together.
     #[test]
     fn feature_indices_match_engine_convention() {
-        // White king b1 (files a-d, not mirrored, bucket 0), black king g8
-        // (mirrored, bucket 0). FEN scan order: black king first.
+        // White king b1 (files a-d, not mirrored), black king g8 (mirrored
+        // to b1); both perspectives in bucket 0. FEN scan order: black king
+        // first.
         let (stm, nstm) = parse_indices("6k1/8/8/8/8/8/8/1K6 w - - 0 1");
 
         assert_eq!(&stm[..2], &[766, 321]); // white perspective
@@ -177,8 +175,8 @@ mod tests {
 
     #[test]
     fn bucket_offsets_match_engine_convention() {
-        // White king d5 (rank 5, bucket 3), black king g8 (mirrored,
-        // bucket 0): only the white perspective gets a bucket offset.
+        // White king d5 (rank 5, bucket 3), black king g8 (mirrored to b1,
+        // bucket 0).
         let (stm, nstm) = parse_indices("6k1/8/8/3K4/8/8/8/8 w - - 0 1");
 
         assert_eq!(&stm[..2], &[3070, 2659]); // white perspective

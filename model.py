@@ -5,9 +5,6 @@ from pathlib import Path
 
 class NNUE(nn.Module):
 
-    # Piece-square features are replicated per own-king input bucket; the
-    # bucket layout and mirroring live in fen_parser and must match
-    # Weiawaga's nnue.rs. Indices arrive already bucketed.
     N_BASE_FEATURES = 768
     N_KING_BUCKETS = 4
     N_FEATURES = N_KING_BUCKETS * N_BASE_FEATURES
@@ -23,9 +20,6 @@ class NNUE(nn.Module):
         )
         self.input_layer_bias = nn.Parameter(torch.zeros(hyperparameters["L1"]))
 
-        # Input factorizer: a bucket-independent embedding shared by all
-        # king buckets, folded into each bucket's rows at save time. Lets
-        # thin buckets generalize from the full dataset.
         self.virtual_input_layer = nn.EmbeddingBag(
             self.N_BASE_FEATURES + 1,
             hyperparameters["L1"],
@@ -88,8 +82,6 @@ class NNUE(nn.Module):
         def i16(t, factor):
             return torch.round(t * factor).to(torch.int16).flatten()
 
-        # Fold the shared virtual rows into every king bucket's rows,
-        # matching the engine's bucket-major input layout.
         input_weight = self.input_layer.weight[: self.N_FEATURES]
         virtual_weight = self.virtual_input_layer.weight[: self.N_BASE_FEATURES]
         folded = input_weight + virtual_weight.repeat(self.N_KING_BUCKETS, 1)
@@ -108,45 +100,3 @@ class NNUE(nn.Module):
 
         with open(Path(path) / f"network_{epoch}.bin", "wb") as file:
             file.write(blob)
-
-
-if __name__ == "__main__":
-    from fen_parser import fen_to_indices
-
-    (stm_indices, nstm_indices) = fen_to_indices("4k3/8/8/3q4/8/8/8/4K3 w - - 0 1")
-
-    model = NNUE(L1=512, N_BUCKETS=8)
-
-    input_batch = {
-        "stm_indices": torch.tensor([stm_indices + [768] * (32 - len(stm_indices))], dtype=torch.long),
-        "nstm_indices": torch.tensor([nstm_indices + [768] * (32 - len(nstm_indices))], dtype=torch.long),
-    }
-
-    # print(indices)
-
-    print(model.psqt_layer(input_batch["stm_indices"].long()))
-    print(model.psqt_layer(input_batch["nstm_indices"].long()))
-
-
-
-    # print(400*model(input).item())
-
-    # model_state_dict = torch.load("nets/current_network/model_checkpoint_49.pth")
-    # print(model_state_dict["loss"])
-    # print(f"{model_state_dict["loss"]:.2e}")
-
-    # model = NNUE(L1=512, N_BUCKETS=8)
-    #
-    # model.load_state_dict(model_state_dict["model_state_dict"])
-    #
-    # model.save_quantized(1, "test_quantized")
-
-    # stm_indices, nstm_indices = fen_to_indices("1r1r4/pp6/4kp2/4pQ1p/7q/8/6PP/5R1K b - - 1 33")
-    # print(nstm_indices)
-    #
-    # input = {
-    #     "stm_indices": torch.tensor([stm_indices + [768] * (32 - len(stm_indices))], dtype=torch.long),
-    #     "nstm_indices": torch.tensor([nstm_indices + [768] * (32 - len(nstm_indices))], dtype=torch.long),
-    # }
-    #
-    # print(400*model(input).item())

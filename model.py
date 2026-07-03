@@ -5,7 +5,12 @@ from pathlib import Path
 
 class NNUE(nn.Module):
 
-    N_FEATURES = 768
+    # Piece-square features are replicated per own-king input bucket; the
+    # bucket layout and mirroring live in fen_parser and must match
+    # Weiawaga's nnue.rs. Indices arrive already bucketed.
+    N_BASE_FEATURES = 768
+    N_KING_BUCKETS = 4
+    N_FEATURES = N_KING_BUCKETS * N_BASE_FEATURES
 
     def __init__(self, **hyperparameters):
         super().__init__()
@@ -18,18 +23,46 @@ class NNUE(nn.Module):
         )
         self.input_layer_bias = nn.Parameter(torch.zeros(hyperparameters["L1"]))
 
+        # Input factorizer: a bucket-independent embedding shared by all
+        # king buckets, folded into each bucket's rows at save time. Lets
+        # thin buckets generalize from the full dataset.
+        self.virtual_input_layer = nn.EmbeddingBag(
+            self.N_BASE_FEATURES + 1,
+            hyperparameters["L1"],
+            padding_idx=self.N_BASE_FEATURES,
+            mode="sum",
+            scale_grad_by_freq=True
+        )
+        nn.init.zeros_(self.virtual_input_layer.weight)
+
         self.hidden_layer = nn.ModuleList(
             [nn.Linear(2 * hyperparameters["L1"], 1) for _ in range(hyperparameters["N_BUCKETS"])]
         )
 
-        self.virtual_layer = nn.Linear(2 * hyperparameters["L1"], 1)
-        nn.init.zeros_(self.virtual_layer.weight)
-        nn.init.zeros_(self.virtual_layer.bias)
+        self.virtual_hidden_layer = nn.Linear(2 * hyperparameters["L1"], 1)
+        nn.init.zeros_(self.virtual_hidden_layer.weight)
+        nn.init.zeros_(self.virtual_hidden_layer.bias)
 
-        scale = self.N_FEATURES ** -0.5
+        scale = self.N_BASE_FEATURES ** -0.5
 
         nn.init.uniform_(self.input_layer.weight, a=-scale, b=scale)
         nn.init.uniform_(self.input_layer_bias, a=-scale, b=scale)
+
+    @classmethod
+    def _virtual_indices(cls, indices: torch.Tensor) -> torch.Tensor:
+        # Map bucketed indices onto the shared base features; the padding
+        # index maps to the virtual layer's own padding row (a plain modulo
+        # would collide it with base feature 0).
+        return torch.where(
+            indices == cls.N_FEATURES, cls.N_BASE_FEATURES, indices % cls.N_BASE_FEATURES
+        )
+
+    def _embed(self, indices: torch.Tensor) -> torch.Tensor:
+        return (
+            self.input_layer(indices)
+            + self.virtual_input_layer(self._virtual_indices(indices))
+            + self.input_layer_bias
+        )
 
     def forward(self, batch: dict[str, torch.Tensor]):
 
@@ -39,13 +72,13 @@ class NNUE(nn.Module):
             .long()
         )
 
-        stm_embeddings = self.input_layer(batch["stm_indices"].long()) + self.input_layer_bias
-        nstm_embeddings = self.input_layer(batch["nstm_indices"].long()) + self.input_layer_bias
+        stm_embeddings = self._embed(batch["stm_indices"].long())
+        nstm_embeddings = self._embed(batch["nstm_indices"].long())
 
         embeddings = torch.cat([stm_embeddings, nstm_embeddings], dim=-1).clamp(0, 1).square()
 
         out = torch.cat([h(embeddings) for h in self.hidden_layer], dim=-1)
-        out = (out + self.virtual_layer(embeddings)).gather(-1, bucket_idx)
+        out = out.gather(-1, bucket_idx) + self.virtual_hidden_layer(embeddings)
 
         return out
 
@@ -55,14 +88,20 @@ class NNUE(nn.Module):
         def i16(t, factor):
             return torch.round(t * factor).to(torch.int16).flatten()
 
+        # Fold the shared virtual rows into every king bucket's rows,
+        # matching the engine's bucket-major input layout.
+        input_weight = self.input_layer.weight[: self.N_FEATURES]
+        virtual_weight = self.virtual_input_layer.weight[: self.N_BASE_FEATURES]
+        folded = input_weight + virtual_weight.repeat(self.N_KING_BUCKETS, 1)
+
         weights = [
-            i16(self.input_layer.weight[: self.N_FEATURES], QA),  # drop padding row
+            i16(folded, QA),
             i16(self.input_layer_bias, QA),
         ]
         biases = []
         for layer in self.hidden_layer:
-            weights.append(i16(layer.weight + self.virtual_layer.weight, QB))
-            biases.append(i16(layer.bias + self.virtual_layer.bias, QB))
+            weights.append(i16(layer.weight + self.virtual_hidden_layer.weight, QB))
+            biases.append(i16(layer.bias + self.virtual_hidden_layer.bias, QB))
 
         blob = torch.cat(weights).cpu().numpy().astype("<i2").tobytes()
         blob += torch.cat(biases).cpu().numpy().astype("<i2").tobytes()

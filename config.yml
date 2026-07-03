@@ -18,4 +18,4 @@ training:
   max_lr: 1.0e-3
   warmup_frac: 0.05
 
-#load: nets/2026-06-28T03-52-28/model_checkpoint_3.pth
+load: nets/2026-07-02T17-49-37/model_checkpoint_15.pth

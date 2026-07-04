@@ -3,6 +3,7 @@ import torch
 from pathlib import Path
 
 import warnings
+
 warnings.filterwarnings(
     "ignore",
     category=UserWarning,
@@ -14,13 +15,14 @@ from torch.utils.data import IterableDataset
 
 
 class PositionVectorIterableDataset(IterableDataset):
-
-    DTYPE = np.dtype([
-        ("stm_indices", np.int16, 32),
-        ("nstm_indices", np.int16, 32),
-        ("cp", np.int16, 1),
-        ("result", np.float16, 1),
-    ])
+    DTYPE = np.dtype(
+        [
+            ("stm_indices", np.int16, 32),
+            ("nstm_indices", np.int16, 32),
+            ("cp", np.int16, 1),
+            ("result", np.float16, 1),
+        ]
+    )
 
     def __init__(self, filenames, batch_size):
         super().__init__()
@@ -32,7 +34,7 @@ class PositionVectorIterableDataset(IterableDataset):
         np.random.shuffle(rows)
         n = len(rows) - len(rows) % self.batch_size  # drop last partial batch
         for i in range(0, n, self.batch_size):
-            chunk = rows[i:i + self.batch_size]
+            chunk = rows[i : i + self.batch_size]
             yield {
                 key: torch.from_numpy(np.ascontiguousarray(chunk[key]))
                 for key in self.DTYPE.names
@@ -41,9 +43,9 @@ class PositionVectorIterableDataset(IterableDataset):
     def __iter__(self):
         worker_info = torch.utils.data.get_worker_info()
         if worker_info is not None:
-            assert (
-                len(self.filenames) >= worker_info.num_workers
-            ), "Number of files must be larger than the number of workers."
+            assert len(self.filenames) >= worker_info.num_workers, (
+                "Number of files must be larger than the number of workers."
+            )
             filenames = self.filenames[worker_info.id :: worker_info.num_workers]
         else:
             filenames = self.filenames

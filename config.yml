@@ -15,6 +15,7 @@ training:
   testing_dir: testing
   save_dir: nets
   epochs: 60
+  wdl_epochs: 10
   max_lr: 1.0e-3
   warmup_frac: 0.05
 

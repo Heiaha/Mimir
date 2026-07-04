@@ -17,7 +17,6 @@ def train_loop(model, dataloader, loss_fn, optimizer, scheduler, device, epoch):
     total_loss = 0
     pbar = tqdm(dataloader, desc=f"Training Epoch {epoch}", leave=False)
     for idx, batch in enumerate(pbar):
-
         batch = {k: v.to(device) for k, v in batch.items()}
 
         pred = model(batch)
@@ -31,14 +30,57 @@ def train_loop(model, dataloader, loss_fn, optimizer, scheduler, device, epoch):
 
         total_loss += loss.item()
 
-        pbar.set_postfix({
-            "loss": total_loss / (idx + 1),
-            "lr": optimizer.param_groups[0]["lr"],
-        })
+        pbar.set_postfix(
+            {
+                "loss": total_loss / (idx + 1),
+                "lr": optimizer.param_groups[0]["lr"],
+            }
+        )
 
         with torch.no_grad():
             for param in model.parameters():
                 param.clamp_(-1.98, 1.98)
+
+
+def wdl_train_loop(model, dataloader, loss_fn, optimizer, device, epoch):
+    model.eval()  # the trunk is frozen; only the WDL head trains
+    total_loss = 0
+    pbar = tqdm(dataloader, desc=f"WDL Training Epoch {epoch}", leave=False)
+    for idx, batch in enumerate(pbar):
+        batch = {k: v.to(device) for k, v in batch.items()}
+
+        loss = loss_fn(model.forward_wdl(batch), batch)
+
+        loss.backward()
+        optimizer.step()
+        optimizer.zero_grad()
+
+        total_loss += loss.item()
+        pbar.set_postfix({"loss": total_loss / (idx + 1)})
+
+
+@torch.no_grad()
+def wdl_test_loop(model, dataloader, loss_fn, device, epoch):
+    model.eval()
+    pbar = tqdm(dataloader, desc=f"WDL Testing Epoch {epoch}", leave=True)
+    loss = 0
+    predicted = torch.zeros(3)
+    actual = torch.zeros(3)
+    n_rows = 0
+    for idx, batch in enumerate(pbar):
+        batch = {k: v.to(device) for k, v in batch.items()}
+        logits = model.forward_wdl(batch)
+        loss += loss_fn(logits, batch).item()
+
+        predicted += logits.softmax(-1).sum(dim=0).cpu()
+        actual += torch.bincount(
+            (batch["result"].flatten() * 2).long(), minlength=3
+        ).cpu()
+        n_rows += logits.shape[0]
+
+        pbar.set_postfix({"loss": loss / (idx + 1)})
+
+    return loss / len(dataloader), predicted / n_rows, actual / n_rows
 
 
 @torch.no_grad()
@@ -97,7 +139,15 @@ def main(config_filename):
     print(f"Number of parameters: {sum(p.numel() for p in model.parameters())}")
 
     loss_fn = losses.ScaledMSELoss(**config["scaling"])
-    optimizer = optim.Adam(model.parameters(), lr=config["training"]["max_lr"])
+
+    # The WDL head trains in its own phase afterwards; keeping it out of the
+    # main optimizer also keeps the param order of older checkpoints.
+    eval_params = [
+        param
+        for name, param in model.named_parameters()
+        if not name.startswith("wdl_layer")
+    ]
+    optimizer = optim.Adam(eval_params, lr=config["training"]["max_lr"])
 
     # Warmup up to max_lr, then cosine anneal to ~0 over the whole run, so the
     # epoch count is just a budget knob. total_steps must be an upper bound on the
@@ -117,7 +167,11 @@ def main(config_filename):
 
     if checkpoint_path:
         checkpoint_info = torch.load(checkpoint_path)
-        model.load_state_dict(checkpoint_info["model_state_dict"])
+        # Checkpoints from before the WDL head lack its keys; tolerate exactly that.
+        missing, unexpected = model.load_state_dict(
+            checkpoint_info["model_state_dict"], strict=False
+        )
+        assert not unexpected and all(k.startswith("wdl_layer.") for k in missing)
         optimizer.load_state_dict(checkpoint_info["optimizer_state_dict"])
         scheduler.load_state_dict(checkpoint_info["scheduler_state_dict"])
         starting_epoch = checkpoint_info["epoch"] + 1
@@ -127,16 +181,15 @@ def main(config_filename):
 
     model.save_quantized(-1, save_path)
 
-    for epoch in range(starting_epoch, epochs):
-
+    for epoch in range(starting_epoch, epochs + 1):
         train_loop(
             model, training_dataloader, loss_fn, optimizer, scheduler, device, epoch
         )
-        test_loss = test_loop(
-            model, testing_dataloader, loss_fn, device, epoch
-        )
+        test_loss = test_loop(model, testing_dataloader, loss_fn, device, epoch)
         lr, *_ = scheduler.get_last_lr()
-        print(f"Epoch {epoch}: test_loss={test_loss:.4e} lr={lr:.2e} best={best_loss:.4e}")
+        print(
+            f"Epoch {epoch}: test_loss={test_loss:.4e} lr={lr:.2e} best={best_loss:.4e}"
+        )
 
         save_path.mkdir(parents=True, exist_ok=True)
 
@@ -157,6 +210,37 @@ def main(config_filename):
         )
 
         model.save_quantized(epoch, save_path)
+
+    # Post-hoc WDL head on the frozen trunk: the eval path (and every blob
+    # saved above) is untouched; this only adds a calibrated result readout.
+    wdl_loss_fn = losses.WDLLoss()
+    wdl_optimizer = optim.Adam(
+        model.wdl_layer.parameters(), lr=config["training"]["max_lr"]
+    )
+
+    for epoch in range(1, config["training"]["wdl_epochs"] + 1):
+        wdl_train_loop(
+            model, training_dataloader, wdl_loss_fn, wdl_optimizer, device, epoch
+        )
+        test_ce, predicted, actual = wdl_test_loop(
+            model, testing_dataloader, wdl_loss_fn, device, epoch
+        )
+        print(
+            f"WDL Epoch {epoch}: test_ce={test_ce:.4e}"
+            f" predicted L/D/W={predicted[0]:.3f}/{predicted[1]:.3f}/{predicted[2]:.3f}"
+            f" actual={actual[0]:.3f}/{actual[1]:.3f}/{actual[2]:.3f}"
+        )
+
+        torch.save(
+            {
+                "epoch": epoch,
+                "model_state_dict": model.state_dict(),
+                "loss": test_ce,
+            },
+            save_path / "model_checkpoint_wdl.pth",
+        )
+
+        model.save_quantized("wdl", save_path)
 
 
 if __name__ == "__main__":

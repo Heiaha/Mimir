@@ -17,6 +17,12 @@ class ScaledMSELoss(nn.Module):
         return F.mse_loss(wdl_pred, wdl_target)
 
 
+class WDLLoss(nn.Module):
+    def forward(self, logits, batch):
+        # Results 0 / 0.5 / 1 map to class indices 0 / 1 / 2 (loss, draw, win).
+        return F.cross_entropy(logits, (batch["result"].flatten() * 2).long())
+
+
 class ScaledCELoss(nn.Module):
     def __init__(self, lambda_: float, nnue_2_score: int, cp_scaling: int, **kwargs):
         super().__init__()

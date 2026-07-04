@@ -16,15 +16,10 @@ OPENING_PLIES = 8
 OUTPUT_DIR = "data/selfplay"
 N_CONCURRENT = 12
 
-
-DRAW_ADJ_SCORE = 15
-DRAW_ADJ_PLIES = 8
-DRAW_ADJ_MIN_PLY = 80
-
 MAX_PLIES = 600
 
-SYZYGY_OUTCOMES = {-2: 0.0, -1: 0.5, 0: 0.5, 1: 0.5, 2: 1.0}
-OUTCOMES = {"1-0": 1.0, "0-1": 0.0, "1/2-1/2": 0.5}
+SYZYGY_OUTCOMES = {-2: -1, -1: 0, 0: 0, 1: 0, 2: 1}
+OUTCOMES = {"1-0": 1, "0-1": -1, "1/2-1/2": 0}
 
 SYZYGY_PATH = "syzygy"
 TB_MAX_MEN = 5
@@ -45,7 +40,7 @@ def is_loud(board: chess.Board, move: chess.Move) -> bool:
 
 
 def tb_outcome(board: chess.Board) -> float | None:
-    """Exact White-perspective WDL in {0.0, 0.5, 1.0} for <=TB_MAX_MEN positions, else None."""
+    """Exact White-perspective WDL in {-1, 0, 1} for <=TB_MAX_MEN positions, else None."""
     if _tablebase is None or chess.popcount(board.occupied) > TB_MAX_MEN:
         return None
     try:
@@ -53,7 +48,7 @@ def tb_outcome(board: chess.Board) -> float | None:
     except KeyError:
         return None  # material not covered by the tables we have
     score = SYZYGY_OUTCOMES[wdl]  # cursed/blessed -> draw
-    return score if board.turn == chess.WHITE else 1.0 - score
+    return score if board.turn == chess.WHITE else -score
 
 
 def random_opening(plies: int) -> chess.Board:
@@ -79,14 +74,16 @@ def play_one_game() -> list[dict]:
         if board.is_game_over(claim_draw=True):
             return []
 
-        game_id = uuid.uuid4().hex  # tags every sample from this game, for per-game analysis
+        game_id = (
+            uuid.uuid4().bytes
+        )  # tags every sample from this game, for per-game analysis
         samples: list[dict] = []
         outcome = None
         draw_streak = 0
 
         for _ in range(MAX_PLIES):
             if board.is_game_over(claim_draw=True):
-                outcome = OUTCOMES.get(board.result(claim_draw=True), 0.5)
+                outcome = OUTCOMES.get(board.result(claim_draw=True), 0)
                 break
 
             analysis = engine.play(
@@ -102,7 +99,7 @@ def play_one_game() -> list[dict]:
             score = analysis.info.get("score")
 
             if score is not None and score.is_mate():
-                outcome = 1.0 if score.white().mate() > 0 else 0.0
+                outcome = 1 if score.white().mate() > 0 else -1
                 break
 
             if score is not None:
@@ -113,12 +110,6 @@ def play_one_game() -> list[dict]:
 
                 if (tb := tb_outcome(board)) is not None:
                     outcome = tb
-                    break
-
-                draw_streak = draw_streak + 1 if abs(cp) <= DRAW_ADJ_SCORE else 0
-
-                if draw_streak >= DRAW_ADJ_PLIES and board.ply() >= DRAW_ADJ_MIN_PLY:
-                    outcome = 0.5
                     break
 
             board.push(move)
@@ -138,9 +129,13 @@ def main() -> None:
 
     buffer: list[dict] = []
 
-    with concurrent.futures.ProcessPoolExecutor(
-        max_workers=N_CONCURRENT
-    ) as executor, tqdm(unit=" positions") as pbar:
+    with (
+        concurrent.futures.ProcessPoolExecutor(max_workers=N_CONCURRENT) as executor,
+        tqdm(
+            unit=" positions",
+            bar_format="{n:,}{unit} [{elapsed}, {rate_fmt}{postfix}]",
+        ) as pbar,
+    ):
         pending = {executor.submit(play_one_game) for _ in range(N_CONCURRENT)}
 
         while pending:
@@ -161,11 +156,18 @@ def main() -> None:
                 buffer.extend(rows)
                 pending.add(executor.submit(play_one_game))
 
-            # Flush whole shards; the trailing partial stays buffered for next time.
             while len(buffer) >= ROWS_PER_FILE:
                 name = uuid.uuid4().hex
                 output_path = output_dir / f"{name}.parquet"
-                pl.DataFrame(buffer[:ROWS_PER_FILE]).write_parquet(output_path, compression="zstd")
+                pl.DataFrame(
+                    buffer[:ROWS_PER_FILE],
+                    schema={
+                        "fen": pl.String,
+                        "game_id": pl.Binary,
+                        "cp": pl.Int16,
+                        "outcome": pl.Int8,
+                    },
+                ).write_parquet(output_path, compression="zstd")
                 del buffer[:ROWS_PER_FILE]
 
 

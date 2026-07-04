@@ -27,14 +27,14 @@ def split_file(input_filename, output_dir, games_per_file=10_000):
     base_output_filename = Path(input_filename).stem
     output_filename = Path(output_dir) / f"{base_output_filename}_{file_n}.pgn"
 
-    with open(input_filename, "r") as input_file, open(
-        output_filename, "w"
-    ) as output_file:
+    with (
+        open(input_filename, "r") as input_file,
+        open(output_filename, "w") as output_file,
+    ):
         count = 0
 
         # Read and write games
         while game := chess.pgn.read_game(input_file):
-
             if game.errors:
                 continue  # Skip games with errors
 
@@ -46,7 +46,9 @@ def split_file(input_filename, output_dir, games_per_file=10_000):
                 file_n += 1
                 count = 0
                 output_file.close()
-                output_filename = Path(output_dir) / f"{base_output_filename}_{file_n}.pgn"
+                output_filename = (
+                    Path(output_dir) / f"{base_output_filename}_{file_n}.pgn"
+                )
                 output_file = open(output_filename, "w")
 
 
@@ -123,9 +125,10 @@ def main() -> None:
     games = read_games()
     buffer: list[str] = []
 
-    with concurrent.futures.ProcessPoolExecutor(
-        max_workers=N_CONCURRENT
-    ) as executor, tqdm(desc="rows", unit=" row") as pbar:
+    with (
+        concurrent.futures.ProcessPoolExecutor(max_workers=N_CONCURRENT) as executor,
+        tqdm(desc="rows", unit=" row") as pbar,
+    ):
         pending = {
             executor.submit(score_one_game, *game)
             for game in itertools.islice(games, N_CONCURRENT)
@@ -156,7 +159,9 @@ def main() -> None:
             while len(buffer) >= ROWS_PER_FILE:
                 name = uuid.uuid4().hex
                 output_path = output_dir / f"{name}.csv"
-                output_path.write_text("\n".join(buffer[:ROWS_PER_FILE]), encoding="utf-8")
+                output_path.write_text(
+                    "\n".join(buffer[:ROWS_PER_FILE]), encoding="utf-8"
+                )
                 del buffer[:ROWS_PER_FILE]
 
         # Input is exhausted -- flush the final partial shard so no rows are lost.

@@ -16,8 +16,6 @@ OPENING_PLIES = 8
 OUTPUT_DIR = "data/selfplay"
 N_CONCURRENT = 12
 
-MAX_PLIES = 600
-
 SYZYGY_OUTCOMES = {-2: -1, -1: 0, 0: 0, 1: 0, 2: 1}
 OUTCOMES = {"1-0": 1, "0-1": -1, "1/2-1/2": 0}
 
@@ -74,18 +72,11 @@ def play_one_game() -> list[dict]:
         if board.is_game_over(claim_draw=True):
             return []
 
-        game_id = (
-            uuid.uuid4().bytes
-        )  # tags every sample from this game, for per-game analysis
+        game_id = uuid.uuid4().bytes
         samples: list[dict] = []
         outcome = None
-        draw_streak = 0
 
-        for _ in range(MAX_PLIES):
-            if board.is_game_over(claim_draw=True):
-                outcome = OUTCOMES.get(board.result(claim_draw=True), 0)
-                break
-
+        while not board.is_game_over(claim_draw=True):
             analysis = engine.play(
                 board,
                 limit=chess.engine.Limit(depth=DEPTH),
@@ -94,7 +85,7 @@ def play_one_game() -> list[dict]:
 
             move = analysis.move
             if move is None:
-                break
+                raise RuntimeError(f"Engine returned no move for: {board.fen()}")
 
             score = analysis.info.get("score")
 
@@ -115,7 +106,7 @@ def play_one_game() -> list[dict]:
             board.push(move)
 
         if outcome is None:
-            return []
+            outcome = OUTCOMES.get(board.result(claim_draw=True), 0)
 
         return [{**s, "game_id": game_id, "outcome": outcome} for s in samples]
 

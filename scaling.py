@@ -72,40 +72,10 @@ class Hist:
 
     def plot(self, scale):
         x = np.linspace(self.low, self.high, self.n_bins)
-        # ax = sns.barplot(x=x, y=self.counts)
         sns.lineplot(x=x, y=self.sigmoid(scale * x))
         sns.lineplot(x=x, y=self.weights / self.counts)
 
         plt.show()
-
-
-def sigmoid(x):
-    return 1 / (1 + np.exp(-x))
-
-
-def fit(x, y):
-    def mse(x, y, k):
-        return np.square(y - sigmoid(k * x)).mean()
-
-    min_ = 0.0
-    max_ = 10
-    delta = 0.1
-    best = mse(x, y, min_)
-
-    for _ in range(10):
-        value = min_
-        while value < max_:
-            error = mse(x, y, value)
-            if error <= best:
-                best = error
-                min_ = value
-            value += delta
-
-        max_ = min_ + delta
-        min_ = min_ - delta
-        delta /= 10
-
-    return min_
 
 
 if __name__ == "__main__":

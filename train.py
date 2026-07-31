@@ -11,43 +11,47 @@ from torch.optim.lr_scheduler import OneCycleLR
 from pathlib import Path
 from tqdm import tqdm
 
+# Reading a running loss syncs the device, so do it rarely.
+LOG_EVERY = 100
+
 
 def train_loop(model, dataloader, loss_fn, optimizer, scheduler, device, epoch):
     model.train()
-    total_loss = 0
+    total_loss = torch.zeros((), device=device)
+    params = list(model.parameters())
     pbar = tqdm(dataloader, desc=f"Training Epoch {epoch}", leave=False)
     for idx, batch in enumerate(pbar):
-        batch = {k: v.to(device) for k, v in batch.items()}
+        batch = {k: v.to(device, non_blocking=True) for k, v in batch.items()}
 
         pred = model(batch)
         loss = loss_fn(pred, batch)
 
-        # Backpropagation
         loss.backward()
         optimizer.step()
         scheduler.step()
         optimizer.zero_grad()
 
-        total_loss += loss.item()
+        total_loss += loss.detach()
 
-        pbar.set_postfix(
-            {
-                "loss": total_loss / (idx + 1),
-                "lr": optimizer.param_groups[0]["lr"],
-            }
-        )
+        if idx % LOG_EVERY == 0:
+            pbar.set_postfix(
+                {
+                    "loss": total_loss.item() / (idx + 1),
+                    "lr": optimizer.param_groups[0]["lr"],
+                }
+            )
 
         with torch.no_grad():
-            for param in model.parameters():
-                param.clamp_(-1.98, 1.98)
+            torch._foreach_clamp_min_(params, -1.98)
+            torch._foreach_clamp_max_(params, 1.98)
 
 
 def wdl_train_loop(model, dataloader, loss_fn, optimizer, device, epoch):
     model.eval()  # the trunk is frozen; only the WDL head trains
-    total_loss = 0
+    total_loss = torch.zeros((), device=device)
     pbar = tqdm(dataloader, desc=f"WDL Training Epoch {epoch}", leave=False)
     for idx, batch in enumerate(pbar):
-        batch = {k: v.to(device) for k, v in batch.items()}
+        batch = {k: v.to(device, non_blocking=True) for k, v in batch.items()}
 
         loss = loss_fn(model.forward_wdl(batch), batch)
 
@@ -55,49 +59,55 @@ def wdl_train_loop(model, dataloader, loss_fn, optimizer, device, epoch):
         optimizer.step()
         optimizer.zero_grad()
 
-        total_loss += loss.item()
-        pbar.set_postfix({"loss": total_loss / (idx + 1)})
+        total_loss += loss.detach()
+        if idx % LOG_EVERY == 0:
+            pbar.set_postfix({"loss": total_loss.item() / (idx + 1)})
 
 
 @torch.no_grad()
 def wdl_test_loop(model, dataloader, loss_fn, device, epoch):
     model.eval()
     pbar = tqdm(dataloader, desc=f"WDL Testing Epoch {epoch}", leave=True)
-    loss = 0
-    predicted = torch.zeros(3)
-    actual = torch.zeros(3)
+    loss = torch.zeros((), device=device)
+    predicted = torch.zeros(3, device=device)
+    actual = torch.zeros(3, device=device)
     n_rows = 0
     for idx, batch in enumerate(pbar):
-        batch = {k: v.to(device) for k, v in batch.items()}
+        batch = {k: v.to(device, non_blocking=True) for k, v in batch.items()}
         logits = model.forward_wdl(batch)
-        loss += loss_fn(logits, batch).item()
+        loss += loss_fn(logits, batch).detach()
 
-        predicted += logits.softmax(-1).sum(dim=0).cpu()
-        actual += torch.bincount(
-            (batch["result"].flatten() * 2).long(), minlength=3
-        ).cpu()
+        predicted += logits.softmax(-1).sum(dim=0)
+        actual += torch.bincount((batch["result"].flatten() * 2).long(), minlength=3)
         n_rows += logits.shape[0]
 
-        pbar.set_postfix({"loss": loss / (idx + 1)})
+        if idx % LOG_EVERY == 0:
+            pbar.set_postfix({"loss": loss.item() / (idx + 1)})
 
-    return loss / len(dataloader), predicted / n_rows, actual / n_rows
+    return (
+        loss.item() / len(dataloader),
+        (predicted / n_rows).cpu(),
+        (actual / n_rows).cpu(),
+    )
 
 
 @torch.no_grad()
 def test_loop(model, dataloader, loss_fn, device, epoch):
     model.eval()
     pbar = tqdm(dataloader, desc=f"Testing Epoch {epoch}", leave=True)
-    loss = 0
+    loss = torch.zeros((), device=device)
     for idx, batch in enumerate(pbar):
-        batch = {k: v.to(device) for k, v in batch.items()}
+        batch = {k: v.to(device, non_blocking=True) for k, v in batch.items()}
         pred = model(batch)
-        loss += loss_fn(pred, batch).item()
-        pbar.set_postfix({"loss": loss / (idx + 1)})
+        loss += loss_fn(pred, batch).detach()
+        if idx % LOG_EVERY == 0:
+            pbar.set_postfix({"loss": loss.item() / (idx + 1)})
 
-    return loss / len(dataloader)
+    return loss.item() / len(dataloader)
 
 
 def main(config_filename):
+    torch.manual_seed(0)
 
     with open(config_filename) as file:
         config = yaml.safe_load(file)
@@ -126,11 +136,13 @@ def main(config_filename):
         training_dataset,
         batch_size=None,  # the dataset yields whole batches
         num_workers=min(len(training_files), config["training"]["workers"]),
+        pin_memory=device == "cuda",
     )
 
     testing_dataloader = DataLoader(
         testing_dataset,
         batch_size=None,
+        pin_memory=device == "cuda",
         num_workers=min(len(testing_files), config["training"]["workers"]),
     )
 
@@ -138,20 +150,17 @@ def main(config_filename):
 
     print(f"Number of parameters: {sum(p.numel() for p in model.parameters())}")
 
-    loss_fn = losses.ScaledMSELoss(**config["scaling"])
+    loss_fn = losses.ScaledPowLoss(**config["scaling"])
 
-    # The WDL head trains in its own phase afterwards; keeping it out of the
-    # main optimizer also keeps the param order of older checkpoints.
+    # The WDL head trains in its own phase, on a frozen trunk.
     eval_params = [
         param
         for name, param in model.named_parameters()
         if not name.startswith("wdl_layer")
     ]
-    optimizer = optim.Adam(eval_params, lr=config["training"]["max_lr"])
+    optimizer = optim.Adam(eval_params, lr=config["training"]["max_lr"], fused=True)
 
-    # Warmup up to max_lr, then cosine anneal to ~0 over the whole run, so the
-    # epoch count is just a budget knob. total_steps must be an upper bound on the
-    # optimizer steps -- it is, since per-worker drop_last only yields fewer.
+    # An upper bound is required: per-worker drop_last only ever yields fewer.
     total_steps = len(training_dataloader) * epochs
     scheduler = OneCycleLR(
         optimizer,
@@ -167,7 +176,7 @@ def main(config_filename):
 
     if checkpoint_path:
         checkpoint_info = torch.load(checkpoint_path)
-        # Checkpoints from before the WDL head lack its keys; tolerate exactly that.
+        # The WDL head is the only key permitted to be absent.
         missing, unexpected = model.load_state_dict(
             checkpoint_info["model_state_dict"], strict=False
         )
@@ -182,20 +191,24 @@ def main(config_filename):
     model.save_quantized(-1, save_path)
 
     for epoch in range(starting_epoch, epochs + 1):
+        # Worker seeds derive from the torch RNG, so this fixes the shuffle
+        # order per epoch and makes stop/resume match an uninterrupted run.
+        torch.manual_seed(epoch)
         train_loop(
             model, training_dataloader, loss_fn, optimizer, scheduler, device, epoch
         )
         test_loss = test_loop(model, testing_dataloader, loss_fn, device, epoch)
         lr, *_ = scheduler.get_last_lr()
-        print(
-            f"Epoch {epoch}: test_loss={test_loss:.4e} lr={lr:.2e} best={best_loss:.4e}"
-        )
 
-        save_path.mkdir(parents=True, exist_ok=True)
-
-        if test_loss < best_loss:
+        improved = test_loss < best_loss
+        if improved:
             best_loss = test_loss
             model.save_quantized("best", save_path)
+
+        print(
+            f"Epoch {epoch}: test_loss={test_loss:.4e} lr={lr:.2e}"
+            f" best={best_loss:.4e}{' *' if improved else ''}"
+        )
 
         torch.save(
             {
@@ -211,11 +224,9 @@ def main(config_filename):
 
         model.save_quantized(epoch, save_path)
 
-    # Post-hoc WDL head on the frozen trunk: the eval path (and every blob
-    # saved above) is untouched; this only adds a calibrated result readout.
     wdl_loss_fn = losses.WDLLoss()
     wdl_optimizer = optim.Adam(
-        model.wdl_layer.parameters(), lr=config["training"]["max_lr"]
+        model.wdl_layer.parameters(), lr=config["training"]["max_lr"], fused=True
     )
 
     for epoch in range(1, config["training"]["wdl_epochs"] + 1):

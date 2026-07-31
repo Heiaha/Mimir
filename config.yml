@@ -3,9 +3,10 @@ model:
   N_BUCKETS: 8
 
 scaling:
-  lambda_: 1.0
+  lambda_: 0.8
   nnue_2_score: 400
-  cp_scaling: 284.61
+  cp_scaling: 121.935
+  p: 2.0
 
 training:
   batch_size: 8192
@@ -19,4 +20,4 @@ training:
   max_lr: 1.0e-3
   warmup_frac: 0.05
 
-#load: nets/2026-07-02T17-49-37/model_checkpoint_15.pth
+#load: nets/2026-07-29T23-34-46/model_checkpoint_2.pth

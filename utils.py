@@ -1,36 +1,37 @@
 import contextlib
 
 import numpy as np
+import polars as pl
 import uuid
 import random
-import csv
 from glob import glob
 from pathlib import Path
 from tqdm import tqdm
 
 from fen_parser import fen_to_indices
 
-MIN_FULLMOVE = 14
+MIN_FULLMOVE = 0
 
 
-def _count_lines(path):
-    with open(path, "rb") as file:
-        return sum(
-            chunk.count(b"\n") for chunk in iter(lambda: file.read(1 << 22), b"")
+def _count_rows(path):
+    return pl.scan_parquet(path).select(pl.len()).collect().item()
+
+
+def _read_and_shuffle(path):
+    rows = (
+        pl.scan_parquet(path)
+        .select("fen", "cp", "outcome")
+        # This predicate is pushed into the row-group statistics, where parquet
+        # truncates strings at 64 bytes, leaving mins with no fullmove field.
+        .filter(
+            pl.col("fen").str.split(" ").list.last().cast(pl.Int32, strict=False)
+            >= MIN_FULLMOVE
         )
-
-
-def _read_and_shuffle_csv(path):
-    with open(path, newline="", encoding="utf-8") as file:
-        reader = csv.reader(file)
-        filtered_rows = [
-            row for row in reader if int(row[0].split()[-1]) >= MIN_FULLMOVE
-        ]
-
-    random.shuffle(filtered_rows)
-
-    for fen, cp_str, result_str in filtered_rows:
-        yield fen, int(cp_str), float(result_str)
+        .collect(engine="streaming")
+        .sample(fraction=1.0, shuffle=True)
+        .rows()
+    )
+    return rows
 
 
 def interleave(*input_globs, train_frac=0.95, size_per_file_mb=100):
@@ -38,14 +39,14 @@ def interleave(*input_globs, train_frac=0.95, size_per_file_mb=100):
     input_filenames = []
     for input_glob in input_globs:
         input_filenames.extend(
-            filename for filename in glob(input_glob) if filename.endswith(".csv")
+            filename for filename in glob(input_glob) if filename.endswith(".parquet")
         )
 
     input_size_mb = (
         sum(Path(filename).stat().st_size for filename in input_filenames) / 1e6
     )
     n_files = max(1, int(input_size_mb // size_per_file_mb))
-    line_counts = {path: _count_lines(path) for path in input_filenames}
+    row_counts = {path: _count_rows(path) for path in input_filenames}
 
     random.shuffle(input_filenames)
     with (
@@ -53,7 +54,7 @@ def interleave(*input_globs, train_frac=0.95, size_per_file_mb=100):
         tqdm(
             unit=" positions",
             bar_format="{l_bar}{bar}| {n:,}/{total:,} [{elapsed}<{remaining}, {rate_fmt}{postfix}]",
-            total=sum(line_counts.values()),
+            total=sum(row_counts.values()),
         ) as pbar,
     ):
         training_files = [
@@ -67,31 +68,33 @@ def interleave(*input_globs, train_frac=0.95, size_per_file_mb=100):
 
         for input_filename in input_filenames:
             file_start = pbar.n
-            for fen, cp, result in _read_and_shuffle_csv(input_filename):
+            for fen, cp, result in _read_and_shuffle(input_filename):
                 white_move = "w" in fen
 
-                stm_indices, nstm_indices = fen_to_indices(fen)
+                # Only stm is stored; dataset.derive_nstm rebuilds the rest.
+                stm_indices = fen_to_indices(fen)
 
                 output_files = (
                     training_files if random.random() < train_frac else testing_files
                 )
                 file = random.choice(output_files)
                 file.write(np.array(stm_indices, dtype=np.int16).tobytes())
-                file.write(np.array(nstm_indices, dtype=np.int16).tobytes())
                 file.write(
                     np.array([cp if white_move else -cp], dtype=np.int16).tobytes()
                 )
+                # White-POV {-1, 0, 1} in, stm-POV {0, 0.5, 1} out.
                 file.write(
                     np.array(
-                        [result if white_move else 1.0 - result], dtype=np.float16
+                        [(1 + result) / 2 if white_move else (1 - result) / 2],
+                        dtype=np.float16,
                     ).tobytes()
                 )
 
                 pbar.update(1)
 
-            # Rows dropped by the fullmove filter still count as progress.
-            pbar.update(file_start + line_counts[input_filename] - pbar.n)
+            # Filtered-out rows still count as progress.
+            pbar.update(file_start + row_counts[input_filename] - pbar.n)
 
 
 if __name__ == "__main__":
-    interleave("data/lichess_elite/scored/*.csv")
+    interleave("data/selfplay_rescored/*.parquet")

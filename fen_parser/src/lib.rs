@@ -5,12 +5,21 @@ const PIECES: &[u8] = b"PNBRQKpnbrqk";
 const WHITE_KING: usize = 5;
 const BLACK_KING: usize = 11;
 
-const N_BASE_FEATURES: usize = 768;
+const N_FILES: usize = 8;
+const N_RANKS: usize = 8;
+const N_SQUARES: usize = N_FILES * N_RANKS;
+const N_PIECE_CODES: usize = PIECES.len();
+const COLOR_FLIP: usize = N_PIECE_CODES / 2;
+const FILE_MIRROR: usize = N_FILES - 1;
+const RANK_FLIP: usize = 56;
+const MAX_PIECES: usize = 32;
+
+const N_BASE_FEATURES: usize = N_PIECE_CODES * N_SQUARES;
 const N_KING_BUCKETS: usize = 4;
 const N_FEATURES: usize = N_KING_BUCKETS * N_BASE_FEATURES;
 
 fn king_bucket(ksq_norm: usize) -> usize {
-    match ksq_norm >> 3 {
+    match ksq_norm / N_FILES {
         0 => 0,
         1 => 1,
         2 | 3 => 2,
@@ -18,17 +27,11 @@ fn king_bucket(ksq_norm: usize) -> usize {
     }
 }
 
-#[derive(PartialEq)]
 enum Color {
     White,
     Black,
 }
 
-// A perspective's feature transform, the counterpart of FeatureCtx in
-// Weiawaga's nnue.rs: piece colors and squares are color-relative (rank
-// flip `^ 56` for Black), the board is horizontally mirrored (`^ 7`) while
-// the perspective's OWN king is on files e-h, and the normalized king
-// square selects a bucket's block of features.
 struct Perspective {
     sq_xor: usize,
     pc_flip: usize,
@@ -39,10 +42,14 @@ impl Perspective {
     fn new(color: Color, own_king_sq: usize) -> Self {
         let (rel_xor, pc_flip) = match color {
             Color::White => (0, 0),
-            Color::Black => (56, 6),
+            Color::Black => (RANK_FLIP, COLOR_FLIP),
         };
         let ksq_rel = own_king_sq ^ rel_xor;
-        let mirror_xor = if ksq_rel & 7 >= 4 { 7 } else { 0 };
+        let mirror_xor = if ksq_rel % N_FILES >= N_FILES / 2 {
+            FILE_MIRROR
+        } else {
+            0
+        };
 
         Self {
             sq_xor: rel_xor ^ mirror_xor,
@@ -52,16 +59,19 @@ impl Perspective {
     }
 
     fn feature_index(&self, pc: usize, sq: usize) -> usize {
-        let index = self.offset + 64 * ((pc + self.pc_flip) % 12) + (sq ^ self.sq_xor);
+        let index = self.offset
+            + N_SQUARES * ((pc + self.pc_flip) % N_PIECE_CODES)
+            + (sq ^ self.sq_xor);
         assert!(index < N_FEATURES);
         index
     }
 }
 
-fn parse_indices(fen: &str) -> (Vec<usize>, Vec<usize>) {
-    let mut pieces: Vec<(usize, usize)> = Vec::with_capacity(32);
-    let mut rank: u8 = 7;
-    let mut file: u8 = 0;
+// Side-to-move perspective only; the trainer derives nstm from these.
+fn parse_indices(fen: &str) -> Vec<usize> {
+    let mut pieces: Vec<(usize, usize)> = Vec::with_capacity(MAX_PIECES);
+    let mut rank: usize = N_RANKS - 1;
+    let mut file: usize = 0;
 
     let mut parts = fen.split_whitespace();
 
@@ -80,7 +90,7 @@ fn parse_indices(fen: &str) -> (Vec<usize>, Vec<usize>) {
                     .iter()
                     .position(|&pc_char| pc_char == char)
                     .unwrap_or_else(|| panic!("Unrecognized piece"));
-                let sq = ((rank << 3) ^ file) as usize;
+                let sq = rank * N_FILES + file;
                 pieces.push((pc, sq));
                 file += 1;
             }
@@ -89,7 +99,7 @@ fn parse_indices(fen: &str) -> (Vec<usize>, Vec<usize>) {
                 file = 0;
             }
             b'1'..=b'8' => {
-                file += char - b'0';
+                file += (char - b'0') as usize;
             }
             _ => {
                 panic!("Unrecognized character.");
@@ -97,36 +107,28 @@ fn parse_indices(fen: &str) -> (Vec<usize>, Vec<usize>) {
         }
     }
 
-    let king_sq = |king: usize| {
-        pieces
-            .iter()
-            .find_map(|&(pc, sq)| (pc == king).then_some(sq))
-            .expect("FEN has no king.")
+    let own_king = match stm {
+        Color::White => WHITE_KING,
+        Color::Black => BLACK_KING,
     };
+    let king_sq = pieces
+        .iter()
+        .find_map(|&(pc, sq)| (pc == own_king).then_some(sq))
+        .expect("FEN has no king.");
 
-    let white = Perspective::new(Color::White, king_sq(WHITE_KING));
-    let black = Perspective::new(Color::Black, king_sq(BLACK_KING));
-    let (own, opp) = match stm {
-        Color::White => (white, black),
-        Color::Black => (black, white),
-    };
+    let own = Perspective::new(stm, king_sq);
 
-    let mut stm_indices = Vec::with_capacity(32);
-    let mut nstm_indices = Vec::with_capacity(32);
+    let mut stm_indices: Vec<usize> = pieces
+        .iter()
+        .map(|&(pc, sq)| own.feature_index(pc, sq))
+        .collect();
 
-    for &(pc, sq) in &pieces {
-        stm_indices.push(own.feature_index(pc, sq));
-        nstm_indices.push(opp.feature_index(pc, sq));
-    }
-
-    stm_indices.resize(32, N_FEATURES);
-    nstm_indices.resize(32, N_FEATURES);
-
-    (stm_indices, nstm_indices)
+    stm_indices.resize(MAX_PIECES, N_FEATURES);
+    stm_indices
 }
 
 #[pyfunction]
-fn fen_to_indices(fen: &str) -> PyResult<(Vec<usize>, Vec<usize>)> {
+fn fen_to_indices(fen: &str) -> PyResult<Vec<usize>> {
     Ok(parse_indices(fen))
 }
 
@@ -152,23 +154,21 @@ fn fen_parser(m: &Bound<'_, PyModule>) -> PyResult<()> {
 mod tests {
     use super::*;
 
-    // Contract test with Weiawaga's nnue.rs (feature_indices_match_trainer
-    // _convention): same position, same expected indices, hardcoded in both
-    // repos. If either side changes its feature convention, both tests must
-    // be updated together.
+    // These indices are hardcoded in Weiawaga's nnue.rs too, in
+    // feature_indices_match_trainer_convention. Both must change together.
     #[test]
     fn feature_indices_match_engine_convention() {
-        // White king b1 (files a-d, not mirrored), black king g8 (mirrored
-        // to b1); both perspectives in bucket 0. FEN scan order: black king
-        // first.
-        let (stm, nstm) = parse_indices("6k1/8/8/8/8/8/8/1K6 w - - 0 1");
+        // White king b1, not mirrored; black king g8, mirrored to b1. Both in
+        // bucket 0, and the FEN scan reaches the black king first.
+        let white = parse_indices("6k1/8/8/8/8/8/8/1K6 w - - 0 1");
+        let black = parse_indices("6k1/8/8/8/8/8/8/1K6 b - - 0 1");
 
-        assert_eq!(&stm[..2], &[766, 321]); // white perspective
-        assert_eq!(&nstm[..2], &[321, 766]); // black perspective
+        assert_eq!(&white[..2], &[766, 321]);
+        assert_eq!(&black[..2], &[321, 766]);
         assert!(
-            stm[2..]
+            white[2..]
                 .iter()
-                .chain(nstm[2..].iter())
+                .chain(black[2..].iter())
                 .all(|&i| i == N_FEATURES)
         );
     }
@@ -177,24 +177,24 @@ mod tests {
     fn bucket_offsets_match_engine_convention() {
         // White king d5 (rank 5, bucket 3), black king g8 (mirrored to b1,
         // bucket 0).
-        let (stm, nstm) = parse_indices("6k1/8/8/3K4/8/8/8/8 w - - 0 1");
+        let white = parse_indices("6k1/8/8/3K4/8/8/8/8 w - - 0 1");
+        let black = parse_indices("6k1/8/8/3K4/8/8/8/8 b - - 0 1");
 
-        assert_eq!(&stm[..2], &[3070, 2659]); // white perspective
-        assert_eq!(&nstm[..2], &[321, 732]); // black perspective
+        assert_eq!(&white[..2], &[3070, 2659]);
+        assert_eq!(&black[..2], &[321, 732]);
     }
 
     #[test]
     fn startpos_perspectives_are_symmetric() {
-        // The starting position is symmetric between the two perspectives
-        // (both kings on the e-file, so both perspectives mirrored), which
-        // the feature transform must preserve.
-        let (stm, nstm) =
+        // Both kings on the e-file, so both perspectives mirror: the two
+        // index sets must come out equal.
+        let mut white =
             parse_indices("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+        let mut black =
+            parse_indices("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b KQkq - 0 1");
 
-        let mut stm_sorted = stm.clone();
-        let mut nstm_sorted = nstm.clone();
-        stm_sorted.sort_unstable();
-        nstm_sorted.sort_unstable();
-        assert_eq!(stm_sorted, nstm_sorted);
+        white.sort_unstable();
+        black.sort_unstable();
+        assert_eq!(white, black);
     }
 }

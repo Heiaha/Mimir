@@ -8,13 +8,13 @@ class NNUE(nn.Module):
     N_KING_BUCKETS = 4
     N_FEATURES = N_KING_BUCKETS * N_BASE_FEATURES
 
-    def __init__(self, **hyperparameters):
+    def __init__(self, counts_per_batch=None, **hyperparameters):
         super().__init__()
         self.input_layer = nn.EmbeddingBag(
             self.N_FEATURES,
             hyperparameters["L1"],
             mode="sum",
-            scale_grad_by_freq=True,
+            scale_grad_by_freq=False,
         )
         self.input_layer_bias = nn.Parameter(torch.zeros(hyperparameters["L1"]))
 
@@ -22,7 +22,7 @@ class NNUE(nn.Module):
             self.N_BASE_FEATURES,
             hyperparameters["L1"],
             mode="sum",
-            scale_grad_by_freq=True,
+            scale_grad_by_freq=False,
         )
         nn.init.zeros_(self.virtual_input_layer.weight)
 
@@ -40,6 +40,28 @@ class NNUE(nn.Module):
 
         nn.init.uniform_(self.input_layer.weight, a=-scale, b=scale)
         nn.init.uniform_(self.input_layer_bias, a=-scale, b=scale)
+
+        if counts_per_batch is not None:
+            # Damp each row to per-occurrence gradient scale: rows expected
+            # more than once per batch shrink by their expected count, rows
+            # below that are left alone. Never amplifies.
+            def damping(expected):
+                return expected.clamp_min(1.0).reciprocal().unsqueeze(1)
+
+            self.register_buffer(
+                "input_damping", damping(counts_per_batch), persistent=False
+            )
+            self.register_buffer(
+                "virtual_damping",
+                damping(
+                    counts_per_batch.view(self.N_KING_BUCKETS, -1).sum(0)
+                ),
+                persistent=False,
+            )
+            self.input_layer.weight.register_hook(lambda g: g * self.input_damping)
+            self.virtual_input_layer.weight.register_hook(
+                lambda g: g * self.virtual_damping
+            )
 
     def _embed(self, flat: torch.Tensor, offsets: torch.Tensor) -> torch.Tensor:
         return (

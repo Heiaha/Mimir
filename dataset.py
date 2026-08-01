@@ -27,6 +27,20 @@ ENEMY_KING = 11
 BUCKET_BY_RANK = np.array([0, 1, 2, 2, 3, 3, 3, 3], dtype=np.int32)
 
 
+def count_features(batches):
+    """Occurrences of each stm feature over one pass of batches, plus positions.
+
+    The nstm stream mirrors the stm distribution, so one stream's counts
+    serve both perspectives.
+    """
+    counts = torch.zeros(NNUE.N_FEATURES, dtype=torch.int64)
+    n_pos = 0
+    for batch in batches:
+        counts += torch.bincount(batch["stm_flat"], minlength=NNUE.N_FEATURES)
+        n_pos += batch["counts"].numel()
+    return counts, n_pos
+
+
 class PositionVectorIterableDataset(IterableDataset):
     DTYPE = np.dtype(
         [

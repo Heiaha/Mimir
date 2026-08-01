@@ -5,7 +5,7 @@ import yaml
 
 import losses
 from model import NNUE
-from dataset import PositionVectorIterableDataset
+from dataset import PositionVectorIterableDataset, count_features
 from torch.utils.data import DataLoader
 from torch.optim.lr_scheduler import OneCycleLR
 from pathlib import Path
@@ -19,6 +19,10 @@ def train_loop(model, dataloader, loss_fn, optimizer, scheduler, device, epoch):
     model.train()
     total_loss = torch.zeros((), device=device)
     params = list(model.parameters())
+    # The engine's fused kernel multiplies a folded (real + virtual) hidden
+    # weight by a 255-clamped activation in i16, so each half must stay
+    # within half the i16-safe range.
+    hidden_weights = [model.hidden_layer.weight, model.virtual_hidden_layer.weight]
     pbar = tqdm(dataloader, desc=f"Training Epoch {epoch}", leave=False)
     for idx, batch in enumerate(pbar):
         batch = {k: v.to(device, non_blocking=True) for k, v in batch.items()}
@@ -44,6 +48,31 @@ def train_loop(model, dataloader, loss_fn, optimizer, scheduler, device, epoch):
         with torch.no_grad():
             torch._foreach_clamp_min_(params, -1.98)
             torch._foreach_clamp_max_(params, 1.98)
+            torch._foreach_clamp_min_(hidden_weights, -0.99)
+            torch._foreach_clamp_max_(hidden_weights, 0.99)
+
+
+def vhat_stats(model, optimizer):
+    """Row-mean sqrt(exp_avg_sq) percentiles for the embedding layers.
+
+    Locates the gradient scale relative to Adam's eps: rows whose vhat sits
+    near eps stop being scale-normalized, which is where static damping can
+    bite.
+    """
+    lines = []
+    for name in ("input_layer", "virtual_input_layer"):
+        weight = getattr(model, name).weight
+        state = optimizer.state.get(weight)
+        if not state:
+            continue
+        vhat = state["exp_avg_sq"].sqrt().mean(dim=1)
+        p1, p50, p99 = (
+            torch.quantile(vhat, torch.tensor([0.01, 0.5, 0.99], device=vhat.device))
+            .cpu()
+            .tolist()
+        )
+        lines.append(f"{name} vhat p1={p1:.2e} p50={p50:.2e} p99={p99:.2e}")
+    return "  ".join(lines)
 
 
 def wdl_train_loop(model, dataloader, loss_fn, optimizer, device, epoch):
@@ -146,7 +175,11 @@ def main(config_filename):
         num_workers=min(len(testing_files), config["training"]["workers"]),
     )
 
-    model = NNUE(**config["model"]).to(device)
+    counts, n_pos = count_features(training_dataloader)
+    counts_per_batch = counts.float() * (batch_size / n_pos)
+    print(f"Feature counts: {n_pos:,} positions, {int((counts > 0).sum())} features seen")
+
+    model = NNUE(counts_per_batch=counts_per_batch, **config["model"]).to(device)
 
     print(f"Number of parameters: {sum(p.numel() for p in model.parameters())}")
 
@@ -209,6 +242,8 @@ def main(config_filename):
             f"Epoch {epoch}: test_loss={test_loss:.4e} lr={lr:.2e}"
             f" best={best_loss:.4e}{' *' if improved else ''}"
         )
+        if epoch % 10 == 0:
+            print(vhat_stats(model, optimizer))
 
         torch.save(
             {

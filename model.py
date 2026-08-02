@@ -42,9 +42,6 @@ class NNUE(nn.Module):
         nn.init.uniform_(self.input_layer_bias, a=-scale, b=scale)
 
         if counts_per_batch is not None:
-            # Damp each row to per-occurrence gradient scale: rows expected
-            # more than once per batch shrink by their expected count, rows
-            # below that are left alone. Never amplifies.
             def damping(expected):
                 return expected.clamp_min(1.0).reciprocal().unsqueeze(1)
 

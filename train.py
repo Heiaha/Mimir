@@ -52,29 +52,6 @@ def train_loop(model, dataloader, loss_fn, optimizer, scheduler, device, epoch):
             torch._foreach_clamp_max_(hidden_weights, 0.99)
 
 
-def vhat_stats(model, optimizer):
-    """Row-mean sqrt(exp_avg_sq) percentiles for the embedding layers.
-
-    Locates the gradient scale relative to Adam's eps: rows whose vhat sits
-    near eps stop being scale-normalized, which is where static damping can
-    bite.
-    """
-    lines = []
-    for name in ("input_layer", "virtual_input_layer"):
-        weight = getattr(model, name).weight
-        state = optimizer.state.get(weight)
-        if not state:
-            continue
-        vhat = state["exp_avg_sq"].sqrt().mean(dim=1)
-        p1, p50, p99 = (
-            torch.quantile(vhat, torch.tensor([0.01, 0.5, 0.99], device=vhat.device))
-            .cpu()
-            .tolist()
-        )
-        lines.append(f"{name} vhat p1={p1:.2e} p50={p50:.2e} p99={p99:.2e}")
-    return "  ".join(lines)
-
-
 def wdl_train_loop(model, dataloader, loss_fn, optimizer, device, epoch):
     model.eval()  # the trunk is frozen; only the WDL head trains
     total_loss = torch.zeros((), device=device)
@@ -242,8 +219,6 @@ def main(config_filename):
             f"Epoch {epoch}: test_loss={test_loss:.4e} lr={lr:.2e}"
             f" best={best_loss:.4e}{' *' if improved else ''}"
         )
-        if epoch % 10 == 0:
-            print(vhat_stats(model, optimizer))
 
         torch.save(
             {

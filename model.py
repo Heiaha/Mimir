@@ -34,7 +34,9 @@ class NNUE(nn.Module):
         nn.init.zeros_(self.virtual_hidden_layer.weight)
         nn.init.zeros_(self.virtual_hidden_layer.bias)
 
-        self.wdl_layer = nn.Linear(2 * hyperparameters["L1"], 3)
+        self.wdl_layer = nn.Linear(
+            2 * hyperparameters["L1"], 3 * hyperparameters["N_BUCKETS"]
+        )
 
         scale = self.N_BASE_FEATURES**-0.5
 
@@ -73,12 +75,16 @@ class NNUE(nn.Module):
 
         return torch.cat([stm_embeddings, nstm_embeddings], dim=-1).clamp(0, 1).square()
 
-    def forward(self, batch: dict[str, torch.Tensor]):
-        bucket_idx = (
-            (batch["counts"].unsqueeze(-1) - 2)
-            .div(-(32 // -self.hidden_layer.out_features), rounding_mode="floor")
+    def _bucket_idx(self, counts: torch.Tensor) -> torch.Tensor:
+        n_buckets = self.hidden_layer.out_features
+        return (
+            (counts.unsqueeze(-1) - 2)
+            .div(-(32 // -n_buckets), rounding_mode="floor")
             .long()
         )
+
+    def forward(self, batch: dict[str, torch.Tensor]):
+        bucket_idx = self._bucket_idx(batch["counts"])
 
         embeddings = self._features(batch)
 
@@ -90,7 +96,9 @@ class NNUE(nn.Module):
     def forward_wdl(self, batch: dict[str, torch.Tensor]) -> torch.Tensor:
         with torch.no_grad():
             features = self._features(batch)
-        return self.wdl_layer(features)
+        logits = self.wdl_layer(features).view(features.shape[0], -1, 3)
+        bucket_idx = self._bucket_idx(batch["counts"]).unsqueeze(-1).expand(-1, -1, 3)
+        return logits.gather(1, bucket_idx).squeeze(1)
 
     def save_quantized(self, epoch: int, path: str) -> None:
         QA, QB = 255, 64

@@ -12,6 +12,7 @@ warnings.filterwarnings(
 
 
 from torch.utils.data import IterableDataset
+from tqdm import tqdm
 
 from model import NNUE
 
@@ -35,7 +36,7 @@ def count_features(batches):
     """
     counts = torch.zeros(NNUE.N_FEATURES, dtype=torch.int64)
     n_pos = 0
-    for batch in batches:
+    for batch in tqdm(batches):
         counts += torch.bincount(batch["stm_flat"], minlength=NNUE.N_FEATURES)
         n_pos += batch["counts"].numel()
     return counts, n_pos

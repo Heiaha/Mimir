@@ -1,5 +1,5 @@
 model:
-  L1: 512
+  L1: 768
   N_BUCKETS: 8
 
 scaling:
@@ -16,8 +16,8 @@ training:
   testing_dir: testing
   save_dir: nets
   epochs: 60
-  wdl_epochs: 10
+  wdl_epochs: 3
   max_lr: 1.0e-3
   warmup_frac: 0.05
 
-#load: nets/2026-07-29T23-34-46/model_checkpoint_2.pth
+#load: nets/2026-08-02T09-35-03/model_checkpoint_60.pth

@@ -5,7 +5,7 @@ model:
 scaling:
   lambda_: 0.8
   nnue_2_score: 400
-  cp_scaling: 121.935
+  cp_scaling: auto
   p: 2.0
 
 training:

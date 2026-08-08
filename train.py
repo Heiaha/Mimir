@@ -6,6 +6,7 @@ import yaml
 import losses
 from model import NNUE
 from dataset import PositionVectorIterableDataset, count_features
+from scaling import fit_cp_scaling
 from torch.utils.data import DataLoader
 from torch.optim.lr_scheduler import OneCycleLR
 from pathlib import Path
@@ -135,6 +136,10 @@ def main(config_filename):
     batch_size = config["training"]["batch_size"]
     device = config["training"]["device"]
 
+    if config["scaling"].get("cp_scaling") in (None, "auto"):
+        config["scaling"]["cp_scaling"] = fit_cp_scaling(training_files, batch_size)
+        print(f"Fitted cp_scaling: {config['scaling']['cp_scaling']:.3f}")
+
     training_dataset = PositionVectorIterableDataset(training_files, batch_size)
     testing_dataset = PositionVectorIterableDataset(testing_files, batch_size)
 
@@ -197,6 +202,9 @@ def main(config_filename):
         best_loss = checkpoint_info.get("best_loss", float("inf"))
 
     save_path.mkdir(parents=True, exist_ok=True)
+
+    with open(save_path / "config.yml", "w") as file:
+        yaml.safe_dump(config, file)
 
     model.save_quantized(-1, save_path)
 

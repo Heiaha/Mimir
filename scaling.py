@@ -1,12 +1,7 @@
 import numpy as np
-import polars as pl
 from pathlib import Path
-import seaborn as sns
-import matplotlib.pyplot as plt
 
 from dataset import PositionVectorIterableDataset
-
-sns.set()
 
 
 class Hist:
@@ -71,6 +66,10 @@ class Hist:
         return 1 / (1 + np.exp(-x))
 
     def plot(self, scale):
+        import seaborn as sns
+        import matplotlib.pyplot as plt
+
+        sns.set()
         x = np.linspace(self.low, self.high, self.n_bins)
         sns.lineplot(x=x, y=self.sigmoid(scale * x))
         sns.lineplot(x=x, y=self.weights / self.counts)
@@ -78,13 +77,23 @@ class Hist:
         plt.show()
 
 
-if __name__ == "__main__":
-    from tqdm import tqdm
+def fit_cp_scaling(filenames, batch_size):
+    hist = Hist(-1000, 1000, 50)
+    dataset = PositionVectorIterableDataset(filenames, batch_size)
 
+    for data in dataset:
+        hist.fill_batch(data["cp"], data["result"])
+
+    return 1 / hist.fit()
+
+
+if __name__ == "__main__":
     hist = Hist(-1000, 1000, 50)
     filenames = sorted(Path("training").glob("*"))
 
     dataset = PositionVectorIterableDataset(filenames, 8092)
+
+    from tqdm import tqdm
 
     for data in tqdm(dataset):
         hist.fill_batch(data["cp"], data["result"])

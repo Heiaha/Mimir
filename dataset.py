@@ -1,3 +1,4 @@
+import itertools
 import numpy as np
 import torch
 from pathlib import Path
@@ -51,10 +52,17 @@ class PositionVectorIterableDataset(IterableDataset):
         ]
     )
 
-    def __init__(self, filenames, batch_size):
+    def __init__(self, filenames, batch_size, steps=None, workers=1):
         super().__init__()
         self.filenames = filenames
         self.batch_size = batch_size
+        self.workers = max(1, workers)
+
+        full_pass = sum(
+            Path(filename).stat().st_size // self.DTYPE.itemsize // batch_size
+            for filename in filenames
+        )
+        self.per_worker = min(steps or full_pass, full_pass) // self.workers
 
     @staticmethod
     def derive_nstm(stm: np.ndarray) -> np.ndarray:
@@ -104,6 +112,10 @@ class PositionVectorIterableDataset(IterableDataset):
             yield self._batch(rows[i : i + self.batch_size])
 
     def __iter__(self):
+        # Seeded from the per-worker torch seed, which train.py varies by
+        # epoch, so the slice differs each epoch and resume stays reproducible.
+        np.random.seed(torch.initial_seed() % (2**32))
+
         worker_info = torch.utils.data.get_worker_info()
         if worker_info is not None:
             assert len(self.filenames) >= worker_info.num_workers, (
@@ -114,12 +126,11 @@ class PositionVectorIterableDataset(IterableDataset):
             filenames = self.filenames
 
         np.random.shuffle(filenames)
-        for filename in filenames:
-            yield from self._stream_file(filename)
+        batches = itertools.chain.from_iterable(
+            self._stream_file(filename) for filename in filenames
+        )
+        yield from itertools.islice(batches, self.per_worker)
 
     def __len__(self):
         # Must match what __iter__ yields: the scheduler sizes itself on this.
-        return sum(
-            Path(filename).stat().st_size // self.DTYPE.itemsize // self.batch_size
-            for filename in self.filenames
-        )
+        return self.per_worker * self.workers

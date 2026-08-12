@@ -140,13 +140,25 @@ def main(config_filename):
         config["scaling"]["cp_scaling"] = fit_cp_scaling(training_files, batch_size)
         print(f"Fitted cp_scaling: {config['scaling']['cp_scaling']:.3f}")
 
-    training_dataset = PositionVectorIterableDataset(training_files, batch_size)
-    testing_dataset = PositionVectorIterableDataset(testing_files, batch_size)
+    training_workers = min(len(training_files), config["training"]["workers"])
+    testing_workers = min(len(testing_files), config["training"]["workers"])
+
+    positions_per_epoch = config["training"].get("positions_per_epoch")
+    training_dataset = PositionVectorIterableDataset(
+        training_files,
+        batch_size,
+        steps=positions_per_epoch // batch_size if positions_per_epoch else None,
+        workers=training_workers,
+    )
+    # The test set is a full pass, so the loss is comparable across epochs.
+    testing_dataset = PositionVectorIterableDataset(
+        testing_files, batch_size, workers=testing_workers
+    )
 
     training_dataloader = DataLoader(
         training_dataset,
         batch_size=None,  # the dataset yields whole batches
-        num_workers=min(len(training_files), config["training"]["workers"]),
+        num_workers=training_workers,
         pin_memory=device == "cuda",
     )
 
@@ -154,7 +166,13 @@ def main(config_filename):
         testing_dataset,
         batch_size=None,
         pin_memory=device == "cuda",
-        num_workers=min(len(testing_files), config["training"]["workers"]),
+        num_workers=testing_workers,
+    )
+
+    print(
+        f"Epoch = {len(training_dataloader):,} batches "
+        f"({len(training_dataloader) * batch_size:,} positions), "
+        f"{epochs} epochs"
     )
 
     counts, n_pos = count_features(training_dataloader)

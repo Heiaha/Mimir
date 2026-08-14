@@ -5,8 +5,8 @@ import yaml
 
 import losses
 from model import NNUE
-from dataset import PositionVectorIterableDataset, count_features
-from scaling import fit_cp_scaling
+from dataset import PositionVectorIterableDataset
+from scaling import Hist
 from torch.utils.data import DataLoader
 from torch.optim.lr_scheduler import OneCycleLR
 from pathlib import Path
@@ -136,10 +136,6 @@ def main(config_filename):
     batch_size = config["training"]["batch_size"]
     device = config["training"]["device"]
 
-    if config["scaling"].get("cp_scaling") in (None, "auto"):
-        config["scaling"]["cp_scaling"] = fit_cp_scaling(training_files, batch_size)
-        print(f"Fitted cp_scaling: {config['scaling']['cp_scaling']:.3f}")
-
     training_workers = min(len(training_files), config["training"]["workers"])
     testing_workers = min(len(testing_files), config["training"]["workers"])
 
@@ -175,7 +171,25 @@ def main(config_filename):
         f"{epochs} epochs"
     )
 
-    counts, n_pos = count_features(training_dataloader)
+    startup_dataset = PositionVectorIterableDataset(
+        training_files, batch_size, workers=training_workers, verify_nstm=True
+    )
+    startup_dataloader = DataLoader(
+        startup_dataset, batch_size=None, num_workers=training_workers
+    )
+
+    hist = Hist(-1000, 1000, 50)
+    counts = torch.zeros(NNUE.N_FEATURES, dtype=torch.int64)
+    n_pos = 0
+    for batch in tqdm(startup_dataloader, desc="Startup pass", leave=False):
+        hist.fill_batch(batch["cp"], batch["result"])
+        counts += torch.bincount(batch["stm_flat"], minlength=NNUE.N_FEATURES)
+        n_pos += batch["counts"].numel()
+
+    if config["scaling"].get("cp_scaling") in (None, "auto"):
+        config["scaling"]["cp_scaling"] = 1 / hist.fit()
+        print(f"Fitted cp_scaling: {config['scaling']['cp_scaling']:.3f}")
+
     counts_per_batch = counts.float() * (batch_size / n_pos)
     print(f"Feature counts: {n_pos:,} positions, {int((counts > 0).sum())} features seen")
 

@@ -77,16 +77,6 @@ class Hist:
         plt.show()
 
 
-def fit_cp_scaling(filenames, batch_size):
-    hist = Hist(-1000, 1000, 50)
-    dataset = PositionVectorIterableDataset(filenames, batch_size)
-
-    for data in dataset:
-        hist.fill_batch(data["cp"], data["result"])
-
-    return 1 / hist.fit()
-
-
 if __name__ == "__main__":
     hist = Hist(-1000, 1000, 50)
     filenames = sorted(Path("training").glob("*"))

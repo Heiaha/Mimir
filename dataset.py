@@ -13,7 +13,6 @@ warnings.filterwarnings(
 
 
 from torch.utils.data import IterableDataset
-from tqdm import tqdm
 
 from model import NNUE
 
@@ -29,20 +28,6 @@ ENEMY_KING = 11
 BUCKET_BY_RANK = np.array([0, 1, 2, 2, 3, 3, 3, 3], dtype=np.int32)
 
 
-def count_features(batches):
-    """Occurrences of each stm feature over one pass of batches, plus positions.
-
-    The nstm stream mirrors the stm distribution, so one stream's counts
-    serve both perspectives.
-    """
-    counts = torch.zeros(NNUE.N_FEATURES, dtype=torch.int64)
-    n_pos = 0
-    for batch in tqdm(batches):
-        counts += torch.bincount(batch["stm_flat"], minlength=NNUE.N_FEATURES)
-        n_pos += batch["counts"].numel()
-    return counts, n_pos
-
-
 class PositionVectorIterableDataset(IterableDataset):
     DTYPE = np.dtype(
         [
@@ -52,11 +37,12 @@ class PositionVectorIterableDataset(IterableDataset):
         ]
     )
 
-    def __init__(self, filenames, batch_size, steps=None, workers=1):
+    def __init__(self, filenames, batch_size, steps=None, workers=1, verify_nstm=False):
         super().__init__()
         self.filenames = filenames
         self.batch_size = batch_size
         self.workers = max(1, workers)
+        self.verify_nstm = verify_nstm
 
         full_pass = sum(
             Path(filename).stat().st_size // self.DTYPE.itemsize // batch_size
@@ -83,12 +69,17 @@ class PositionVectorIterableDataset(IterableDataset):
             + (square ^ RANK_FLIP ^ mirror[:, np.newaxis])
         )
 
-    @staticmethod
-    def _batch(chunk):
+    def _batch(self, chunk, filepath):
         stm = chunk["stm_indices"].astype(np.int32)
-        nstm = PositionVectorIterableDataset.derive_nstm(stm)
-
         keep = stm != NNUE.N_FEATURES
+        nstm = self.derive_nstm(stm)
+
+        if self.verify_nstm:
+            back = self.derive_nstm(np.where(keep, nstm, NNUE.N_FEATURES))
+            assert (back[keep] == stm[keep]).all(), (
+                f"{filepath}: derive_nstm involution failed"
+            )
+
         counts = keep.sum(axis=1)
         offsets = np.cumsum(counts) - counts
 
@@ -109,7 +100,7 @@ class PositionVectorIterableDataset(IterableDataset):
         np.random.shuffle(rows)
         n = len(rows) - len(rows) % self.batch_size
         for i in range(0, n, self.batch_size):
-            yield self._batch(rows[i : i + self.batch_size])
+            yield self._batch(rows[i : i + self.batch_size], filepath)
 
     def __iter__(self):
         # Seeded from the per-worker torch seed, which train.py varies by

@@ -5,7 +5,7 @@ description = "NNUE training suite for the Weiawaga chess engine"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "chess~=1.10.0",
+    "chess~=1.11.2",
     "fen-parser",
     "matplotlib~=3.11.2",
     "numpy~=2.5.4",

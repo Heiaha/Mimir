@@ -2,8 +2,10 @@
 Mimir is a suite of scripts used for training a NNUE evaluation function for [Weiawaga](https://github.com/Heiaha/Weiawaga). 
 
 # Setup 
-To use it, some setup is required, as the position vector generation is done via PyO3 bindings to a Rust library. Firstly you will need the [Rust toolchain](https://www.rust-lang.org/tools/install) installed. You'll also need the packages in ```requirements.txt``` installed via pip or conda. Once you have these, navigate to fen_parser and build via
+To use it, some setup is required, as the position vector generation is done via PyO3 bindings to a Rust library. You will need the [Rust toolchain](https://www.rust-lang.org/tools/install) and [uv](https://docs.astral.sh/uv/getting-started/installation/) installed. Once you have these, create the environment (this also builds fen_parser, and rebuilds it whenever its Rust source changes) via
 
 ```
-maturin develop --release
+uv sync
 ```
+
+and run scripts with `uv run`, e.g. `uv run train.py`.

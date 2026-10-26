@@ -123,7 +123,8 @@ def interleave(*input_globs, train_frac=0.95, size_per_file_mb=100, canonical_sc
 
 if __name__ == "__main__":
     interleave(
-        "data/selfplay_rescored/*.parquet",
         "data/selfplay_v0_rescored/*.parquet",
+        "data/selfplay_v1_rescored/*.parquet",
+        "data/selfplay_v2_rescored/*.parquet",
         canonical_scaling=120.0,
     )

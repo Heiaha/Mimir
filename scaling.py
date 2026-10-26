@@ -35,35 +35,32 @@ class Hist:
         self.counts += np.bincount(bins, minlength=self.n_bins)
 
     def fit(self):
-        def mse(x, y, k):
+        filled = self.counts > 0
+        x = np.linspace(self.low, self.high, self.n_bins)[filled]
+        y = self.weights[filled] / self.counts[filled]
+
+        def mse(k):
             return np.square(y - self.sigmoid(k * x)).mean()
 
-        x = np.linspace(self.low, self.high, self.n_bins)
-        y = self.weights / self.counts
+        low, high, n_steps = 0.0, 10.0, 100
+        best_k = 0.0
+        best = mse(best_k)
 
-        min_ = 0.0
-        max_ = 10
-        delta = 0.1
-        best = mse(x, y, min_)
-
+        # Each pass re-brackets around the incumbent, which is never discarded.
         for _ in range(10):
-            value = min_
-            while value < max_:
-                error = mse(x, y, value)
-                if error <= best:
-                    best = error
-                    min_ = value
-                value += delta
+            for k in np.linspace(low, high, n_steps + 1):
+                error = mse(k)
+                if error < best:
+                    best, best_k = error, k
 
-            max_ = min_ + delta
-            min_ = min_ - delta
-            delta /= 10
+            step = (high - low) / n_steps
+            low, high = best_k - step, best_k + step
 
-        return min_
+        return float(best_k)
 
     @staticmethod
     def sigmoid(x):
-        return 1 / (1 + np.exp(-x))
+        return 1 / (1 + np.exp(-np.clip(x, -700, 700)))
 
     def plot(self, scale):
         import seaborn as sns

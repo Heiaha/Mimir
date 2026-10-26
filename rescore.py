@@ -7,8 +7,8 @@ import chess.syzygy
 import polars as pl
 from tqdm import tqdm
 
-INPUT_GLOB = "data/selfplay/*.parquet"
-OUTPUT_DIR = "data/selfplay_rescored"
+INPUT_GLOB = "data/selfplay_v2/*.parquet"
+OUTPUT_DIR = "data/selfplay_v2_rescored"
 SYZYGY_PATH = "syzygy"
 TB_MAX_MEN = 5
 N_CONCURRENT = 12

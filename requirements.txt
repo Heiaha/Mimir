@@ -1,5 +1,8 @@
 chess~=1.10.0
 numpy~=2.5.4
+matplotlib~=3.11.2
+maturin~=1.15.0
+polars~=2.1.0
 PyYAML~=6.0.3
 seaborn~=0.13.2
 torch~=2.14.1

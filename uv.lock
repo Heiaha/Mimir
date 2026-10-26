@@ -63,12 +63,9 @@ wheels = [
 
 [[package]]
 name = "chess"
-version = "1.10.0"
+version = "1.11.2"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/03/7d/b9db31dbea86c8e7c1479edf5c6c2d0a719724c741e351e411eef2858880/chess-1.10.0.tar.gz", hash = "sha256:bccde105f54aa436e899f92b4ba953731c65012a863fd9235683d0e2863ccd54", size = 161136, upload-time = "2023-07-27T16:33:32.737Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/d6/d8/15cfcb738d2518daf04d34b23419bd359cbd8e09da50778ebac521774fc8/chess-1.10.0-py3-none-any.whl", hash = "sha256:48ff7c084a370811819cfc753c2ee159942356ada70824666bd01ee3fca170d0", size = 154405, upload-time = "2023-07-27T16:33:30.791Z" },
-]
+sdist = { url = "https://files.pythonhosted.org/packages/93/09/7d04d7581ae3bb8b598017941781bceb7959dd1b13e3ebf7b6a2cd843bc9/chess-1.11.2.tar.gz", hash = "sha256:a8b43e5678fdb3000695bdaa573117ad683761e5ca38e591c4826eba6d25bb39", size = 6131385, upload-time = "2025-02-25T19:10:27.328Z" }
 
 [[package]]
 name = "colorama"
@@ -572,7 +569,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "chess", specifier = "~=1.10.0" },
+    { name = "chess", specifier = "~=1.11.2" },
     { name = "fen-parser", directory = "fen_parser" },
     { name = "matplotlib", specifier = "~=3.11.2" },
     { name = "numpy", specifier = "~=2.5.4" },
